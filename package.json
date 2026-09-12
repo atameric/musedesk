@@ -1,0 +1,54 @@
+{
+  "name": "musedesk",
+  "productName": "MuseDesk",
+  "version": "1.0.0-beta.1",
+  "description": "Unofficial macOS desktop client for the Muse Code CLI (chat over muse serve)",
+  "main": ".vite/build/main.js",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atameric/musedesk.git"
+  },
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "NODE_OPTIONS=\"--require ./scripts/forge-extract-shim.js\" electron-forge package",
+    "make": "NODE_OPTIONS=\"--require ./scripts/forge-extract-shim.js\" electron-forge make",
+    "publish": "electron-forge publish",
+    "lint": "eslint --ext .ts,.tsx .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"test/unit/*.test.ts\"",
+    "e2e": "node --import tsx --test --test-concurrency=1 \"test/e2e/*.test.ts\"",
+    "screenshots": "npx vite build && node scripts/capture-screenshots.cjs"
+  },
+  "keywords": [],
+  "author": {
+    "name": "Ata"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-dmg": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
+    "@electron/fuses": "^1.8.0",
+    "@types/electron-squirrel-startup": "^1.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "44.3.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}
