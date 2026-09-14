@@ -28,7 +28,7 @@ with `npm run screenshots` (headless, no CLI or auth needed)._
   their own CLI install and their own membership.
 - Node.js 20+ and npm (for development builds).
 
-This build was verified against `Muse Code 1.1.1 (1.1.1-R2514.1)`. On every
+This build was verified against `Muse Code 1.2.1 (1.2.1-R2847.1)`. On every
 launch the app compares the live protocol fingerprint with the pinned one
 and refuses to drive an unknown protocol.
 
