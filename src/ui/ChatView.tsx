@@ -1,13 +1,18 @@
 import React from 'react';
 import { visibleTranscriptItems, type TranscriptSnapshot } from '../msp/transcript';
+import { infraTurnErrorGuidance, isInfraTurnError } from '../shared/errors';
 import { MessageItem } from './MessageItem';
 
 export function ChatView({
   snapshot,
   shotsFor,
+  busy,
+  onRestartHost,
 }: {
   snapshot: TranscriptSnapshot;
   shotsFor: (commandId?: string) => string[];
+  busy: boolean;
+  onRestartHost: (() => void) | null;
 }) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -21,6 +26,10 @@ export function ChatView({
   const turnList = Object.values(snapshot.turns);
   const lastTurn = turnList.length > 0 ? turnList[turnList.length - 1] : null;
   const rows = visibleTranscriptItems(snapshot.items);
+  const failedTurn = !snapshot.activeTurnId && lastTurn?.phase === 'failed' ? lastTurn : null;
+  const failedKind = failedTurn?.error?.kind ?? '';
+  const guidance = failedTurn?.error ? infraTurnErrorGuidance(failedKind) : null;
+  const showRestart = onRestartHost !== null && failedKind !== '' && isInfraTurnError(failedKind);
 
   return (
     <div className="chat" ref={scrollRef}>
@@ -33,10 +42,18 @@ export function ChatView({
           <span className="spinner" /> Working…
         </div>
       )}
-      {!snapshot.activeTurnId && lastTurn?.phase === 'failed' && (
+      {failedTurn && (
         <div className="turn-status failed">
-          Turn failed: {lastTurn.error?.message ?? 'unknown error'}
-          {lastTurn.error?.retryable ? ' (retryable — send again to retry)' : ''}
+          <span>
+            Turn failed: {failedTurn.error?.message ?? 'unknown error'}
+            {failedTurn.error?.retryable ? ' (retryable — send again to retry)' : ''}
+          </span>
+          {guidance && <span className="fail-guide">{guidance}</span>}
+          {showRestart && (
+            <button className="btn small" onClick={() => onRestartHost?.()} disabled={busy}>
+              Restart host
+            </button>
+          )}
         </div>
       )}
       {!snapshot.activeTurnId && lastTurn?.phase === 'cancelled' && (

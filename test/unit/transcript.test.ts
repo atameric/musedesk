@@ -173,3 +173,67 @@ describe('chat visibility', () => {
     assert.deepEqual([...CHAT_HIDDEN_KINDS], ['reminderChild']);
   });
 });
+
+describe('resync from served history', () => {
+  function startedStore() {
+    const store = createTranscriptStore();
+    store.apply('turn/started', { commandId: 'c1', sessionId: S, turnId: T, viewCursor: 'v1' });
+    store.apply('item/started', { item: userItem('hi'), sessionId: S, viewCursor: 'v2' });
+    return store;
+  }
+
+  it('rebuilds items and keeps the turn active when the server agrees', () => {
+    const store = startedStore();
+    store.apply('item/delta', { delta: 'stale', itemId: 'item-agent', sessionId: S, viewCursor: 'v3' });
+    store.resyncFromHistory([userItem('hi'), agentItem('fresh answer', 'completed', 2)], T);
+    const snap = store.snapshot();
+    assert.equal(snap.activeTurnId, T);
+    assert.equal(snap.turns[T].phase, 'running');
+    assert.deepEqual(
+      snap.items.map((i) => i.text),
+      ['hi', 'fresh answer'],
+    );
+  });
+
+  it('completes a stale active turn the server no longer reports', () => {
+    const store = startedStore();
+    store.resyncFromHistory([userItem('hi'), agentItem('late answer', 'completed', 2)], null);
+    const snap = store.snapshot();
+    assert.equal(snap.activeTurnId, null);
+    assert.equal(snap.turns[T].phase, 'completed');
+    assert.equal(snap.items.length, 2);
+  });
+
+  it('switches to a server turn the client never saw start', () => {
+    const store = startedStore();
+    store.resyncFromHistory([userItem('hi')], 'turn-2');
+    const snap = store.snapshot();
+    assert.equal(snap.activeTurnId, 'turn-2');
+    assert.equal(snap.turns[T].phase, 'completed');
+    assert.equal(snap.turns['turn-2'].phase, 'running');
+  });
+
+  it('reconciles turns without touching items when history is unserved', () => {
+    const store = startedStore();
+    store.resyncFromHistory(null, null);
+    const snap = store.snapshot();
+    assert.equal(snap.activeTurnId, null);
+    assert.equal(snap.turns[T].phase, 'completed');
+    assert.equal(snap.items.length, 1);
+  });
+
+  it('leaves terminal turns alone', () => {
+    const store = startedStore();
+    store.apply('turn/completed', {
+      sessionId: S,
+      terminal: 'failed',
+      turnId: T,
+      viewCursor: 'v3',
+      error: { kind: 'modelError', message: 'bad', retryable: false },
+    });
+    store.resyncFromHistory([userItem('hi')], null);
+    const snap = store.snapshot();
+    assert.equal(snap.turns[T].phase, 'failed');
+    assert.equal(snap.turns[T].error?.kind, 'modelError');
+  });
+});

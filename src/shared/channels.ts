@@ -21,7 +21,10 @@ export const IPC = {
   userInputCancel: 'musedesk:userinput/cancel',
   imagePick: 'musedesk:image/pick',
   hostSetFullAccess: 'musedesk:host/setFullAccess',
+  hostRestart: 'musedesk:host/restart',
   workspacePick: 'musedesk:workspace/pick',
   workspaceDefault: 'musedesk:workspace/default',
+  gitStatus: 'musedesk:git/status',
+  gitDiff: 'musedesk:git/diff',
   chatEvent: 'musedesk:chat-event',
 } as const;

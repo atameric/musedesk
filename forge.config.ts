@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerDMG } from '@electron-forge/maker-dmg';
 import { VitePlugin } from '@electron-forge/plugin-vite';
@@ -11,6 +13,20 @@ const config: ForgeConfig = {
     appBundleId: 'com.github.atameric.musedesk',
   },
   rebuildConfig: {},
+  hooks: {
+    // Build output is a runnable .app that Spotlight/Launchpad would
+    // otherwise index as a second MuseDesk next to the installed one.
+    // Re-mark the output root after every package (`make` runs this too).
+    postPackage: async (_forgeConfig, packageResult) => {
+      for (const outputPath of packageResult.outputPaths) {
+        try {
+          fs.writeFileSync(path.join(path.dirname(outputPath), '.metadata_never_index'), '');
+        } catch {
+          /* best effort: indexing hygiene must never fail a build */
+        }
+      }
+    },
+  },
   // v1 ships macOS-only unsigned .dmg (plan decision: dmg exclusively).
   // Distinct volume title so the mounted installer disk can't be mistaken
   // for the installed app (both would otherwise read "MuseDesk").

@@ -130,6 +130,14 @@ export interface TranscriptStore {
   applyPage(events: ViewFrame[]): void;
   /** Seed from served history (resume/read inline items or snapshot state). */
   seed(items: Item[]): void;
+  /**
+   * Rebuild items from freshly served history and reconcile the active turn
+   * against the server's session state. A locally active turn the server no
+   * longer reports is over (its terminal event was missed), so it folds as
+   * completed and the spinner clears. `null` items (history unserved)
+   * reconciles turns only. Terminal turns are never rewritten.
+   */
+  resyncFromHistory(items: Item[] | null, serverActiveTurnId: string | null): void;
   snapshot(): TranscriptSnapshot;
 }
 
@@ -236,16 +244,40 @@ export function createTranscriptStore(): TranscriptStore {
     }
   }
 
+  function seedItems(items: Item[]): void {
+    for (const item of items) {
+      if (!item || typeof item.itemId !== 'string') continue;
+      entries.set(item.itemId, { base: { ...item }, deltas: new Map() });
+      if (!order.includes(item.itemId)) order.push(item.itemId);
+    }
+  }
+
   return {
     apply,
     applyPage(events: ViewFrame[]): void {
       for (const e of events) apply(e.method, e.params);
     },
     seed(items: Item[]): void {
-      for (const item of items) {
-        if (!item || typeof item.itemId !== 'string') continue;
-        entries.set(item.itemId, { base: { ...item }, deltas: new Map() });
-        if (!order.includes(item.itemId)) order.push(item.itemId);
+      seedItems(items);
+    },
+    resyncFromHistory(items: Item[] | null, serverActiveTurnId: string | null): void {
+      if (items) {
+        entries.clear();
+        order.length = 0;
+        gap = null;
+        seedItems(items);
+      }
+      if (activeTurnId && activeTurnId !== serverActiveTurnId) {
+        const t = turns[activeTurnId];
+        if (t && (t.phase === 'running' || t.phase === 'queued')) {
+          turns[activeTurnId] = { turnId: activeTurnId, phase: 'completed' };
+        }
+      }
+      if (serverActiveTurnId) {
+        turns[serverActiveTurnId] = { turnId: serverActiveTurnId, phase: 'running' };
+        activeTurnId = serverActiveTurnId;
+      } else {
+        activeTurnId = null;
       }
     },
     snapshot(): TranscriptSnapshot {

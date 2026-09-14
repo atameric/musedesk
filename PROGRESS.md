@@ -149,6 +149,129 @@ Gates: `npm run typecheck`, `npm run lint`, `npm test` (25 unit),
   `visibleTranscriptItems` + `CHAT_HIDDEN_KINDS` in transcript.ts, rendered
   by ChatView, covered by transcript.test.ts.
 
+## Beta.2 re-verification (CLI 1.2.1)
+
+- All gates green against `Muse Code 1.2.1 (1.2.1-R2847.1)`: typecheck,
+  lint, 42 unit, 17 e2e (live lifecycle included, no skips).
+- Lifecycle fix: 1.2.1 fans out `reminderChild` sub-sessions
+  (skill/goal/verify-reminder) per turn and `turn/completed` waits for
+  them (~16–34s on echo), so the e2e budget went 20s → 90s
+  (`test/e2e/lifecycle.test.ts`). App behavior unchanged — the turn was
+  always completing, the test just stopped waiting.
+- Observed, no action: live host emits `session/started`/`session/closed`,
+  which are outside the pinned `MspNotification` union; the client
+  ignores unknown notifications and schema-drift stays green.
+
+## Intel-deprecation warning follow-up
+
+- Audited every shippable artifact for Intel slices: `/Applications`
+  copies, `out/` build, both beta DMGs (mounted + scanned), and the real
+  `muse` CLI payload — all `arm64`, no action needed on the bundle itself.
+- Added a startup CLI arch probe (`src/msp/arch.ts`): resolves the launcher
+  script to its `.muse-version` payload (sibling scan fallback), classifies
+  via `lipo`/`file`, never throws. Surfaced as `HostStatus.cliArch`; the UI
+  shows a warn banner with reinstall guidance when the CLI is Intel-only.
+- `npm run check:arch` (`scripts/check-arch.sh`) fails future builds that
+  sneak Intel slices into the `.app` or DMGs. Covered by 7 hermetic unit
+  cases (`test/unit/arch.test.ts`); gates green (49 unit, typecheck, lint).
+
+## Duplicate-in-Spotlight fix
+
+- Symptom: Spotlight showed two MuseDesk icons. Cause: `npm run package`
+  leaves a runnable `out/MuseDesk-darwin-arm64/MuseDesk.app` that macOS
+  indexes alongside `/Applications/MuseDesk.app` — not a double install.
+- Fix: `postPackage` hook in `forge.config.ts` writes
+  `.metadata_never_index` into the output root after every package (`make`
+  runs it too); regression-covered in `test/unit/packaging.test.ts`.
+- Cleanup: removed the stale `out/MuseDesk-darwin-arm64` build copy
+  (regenerates on package; DMGs kept), wrote the marker immediately, and
+  verified `mdfind` returns only `/Applications/MuseDesk.app`.
+- Noted: installed copy is beta.1 while a beta.2 DMG exists in `out/make`;
+  user chose to stay on beta.1 for now.
+
+## Project sidebar
+
+- Sidebar now groups sessions by working folder (`src/shared/projects.ts`:
+  `groupSessions` + `musedesk.projects` localStorage store, 7 hermetic unit
+  cases). Top button is **+ New Project** (folder picker, no immediate chat);
+  each project row has a **+** that starts a chat in that folder.
+- Rows expand/collapse with persisted state; the active session's project
+  auto-expands; collapsed rows aggregate the running dot + pending badges.
+  Folder-less sessions group under **default folder**. Footer button removed.
+- Verified both states pixel-first via headless captures (expanded +
+  temporarily seeded collapsed); README screenshots regenerated. Gates green
+  (57 unit, typecheck, lint).
+
+## Turn recovery (stuck spinner + infra failures)
+
+- Root-caused the MCP failure from the session journal: `turn/completed`
+  with `configError`/`retryable:false` in ~22ms — the session runtime lost
+  MCP, so resending can never succeed. Infra kinds (`configError`,
+  `environmentError`, `launchError`) now get guidance + a **Restart host**
+  button (`musedesk:host/restart` IPC → `startHostWith`, same re-attach flow
+  as the access toggle, blocked while any turn runs).
+- Stuck Working… (missed terminal event on long answers): new
+  `TranscriptStore.resyncFromHistory` reconciles items + active turn against
+  a point-in-time `session/read`. Manual ⟳ button in the top bar plus an
+  automatic watchdog (active turn silent 60s → one read RPC/min, silent
+  unless it unsticks).
+- Proof: 5 resync fold cases + 2 infra-guidance cases (64 unit green),
+  typecheck, lint, 17 e2e green, screenshots regenerated (topbar button).
+
+## Sidebar fixes: collapse + hide
+
+- Fixed the uncollapsible active project: the always-expanded invariant
+  fought the user's clicks (it snapped back open instantly). Replaced with
+  expand-on-select — opening a session reveals its project once via
+  `selectSession`/boot/`newChatIn`, then the user is free to collapse it.
+- New × per project row: hides the folder from the sidebar only (sessions
+  untouched, persisted in `musedesk.projects.hidden`). Re-adding the folder
+  with + New Project restores it with its old chats; a notice explains the
+  restore path. Old stores without `hidden` migrate cleanly.
+- Proof: storage round-trip/migration/fallback cases (65 unit green),
+  typecheck, lint warning-free, 17 e2e green, screenshots regenerated.
+
+## Context usage bar
+
+- Top bar now shows the active session's context occupancy (`ctx N%` +
+  mini bar, amber/red by `warning`/`blocked` pressure, exact counts on
+  hover). Fed by live `session/contextUsage` notifications plus the
+  snapshot `contextUsage` block on resume/resync (`src/shared/contextUsage.ts`,
+  5 hermetic cases). Hidden until the server first reports.
+- Out of scope by protocol: account-level (hourly/weekly) allowances are
+  exposed nowhere — not in MSP, not in the CLI, not on disk — so only
+  per-session context can be shown. README says so explicitly.
+- Proof: 70 unit green, typecheck, lint, pixel-verified via a temporarily
+  seeded capture (reverted; committed screenshots unchanged in behavior).
+
+## Top-3 from the roadmap: todos, diff viewer, token counter
+
+- **Tasks tab**: live plan checklist fed by `session/todoListChanged` plus
+  the snapshot `todoList` block on resume/resync (`src/shared/sessionStats.ts`,
+  replace-wholesale; empty list clears). Status glyphs, `activeForm` for the
+  running item, open-count in the tab.
+- **Changes tab**: read-only git panel (`src/main/git.ts`: `status`/`diff`
+  only via fixed-arg `execFile`, absolute-dir validation, `..` escape
+  refusal, 100KB diff cap; untracked files get an all-add preview). Branch,
+  per-file staged/unstaged badges, click-to-expand colored diff. Refreshes
+  on turn completion, session switch, tab open, and manual ⟳.
+- **Token pill**: topbar `tok 245K` from `session/tokenUsage` cumulative
+  totals (+ snapshot seed), exact prompt/output split on hover.
+- Right `SidePanel` shell (Tasks/Changes tabs, persisted open state,
+  topbar toggle). Backlog items 4–20 moved to `docs/ROADMAP.md`.
+- Proof: 81 unit green (sessionStats/git/diff cases), typecheck, lint,
+  17 e2e green; all three pixels verified via temporarily seeded captures
+  (reverted afterwards).
+
+## Beta.3 release (1.0.0-beta.3)
+
+Shipped since beta.2: CLI arch probe + in-app Rosetta warning, `check:arch`
+packaging gate, Spotlight-excluded build output, project sidebar (folders,
+collapse, hide), turn recovery (stuck-spinner resync + host restart),
+context/token topbar meters, tasks/changes side panel, read-only git diff
+viewer. Backlog moved to `docs/ROADMAP.md`. Gates: 81 unit, 17 e2e,
+typecheck, lint green; verified against CLI 1.2.1.
+
 ## Continuing
 
 - After any CLI upgrade: re-export schema, re-pin, re-run all gates.

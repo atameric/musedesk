@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Session } from '../msp/msp';
+import type { ProjectGroup } from '../shared/projects';
 
 export function timeAgo(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
@@ -26,64 +27,145 @@ export function sessionTitle(s: Session, firstUserText?: string): string {
 }
 
 interface SidebarProps {
-  sessions: Session[] | null;
+  projects: ProjectGroup[] | null;
   activeId: string | null;
   busy: boolean;
   pendingCounts: Record<string, number>;
-  newChatFolder: string | null;
+  collapsed: Record<string, boolean>;
   titleFor: (s: Session) => string;
   onSelect: (sessionId: string) => void;
-  onNew: () => void;
-  onNewHere: () => void;
+  onToggle: (projectId: string) => void;
+  onHide: (folder: string | null, name: string) => void;
+  onNewProject: () => void;
+  onNewChatIn: (folder: string | null) => void;
   onRefresh: () => void;
 }
 
-export function Sidebar({ sessions, activeId, busy, pendingCounts, newChatFolder, titleFor, onSelect, onNew, onNewHere, onRefresh }: SidebarProps) {
-  const folderBase = (newChatFolder ?? '').split('/').filter(Boolean).pop() ?? null;
+function SessionRow({
+  s,
+  active,
+  busy,
+  pending,
+  title,
+  onSelect,
+}: {
+  s: Session;
+  active: boolean;
+  busy: boolean;
+  pending: number;
+  title: string;
+  onSelect: (sessionId: string) => void;
+}) {
+  return (
+    <button
+      className={`sess-row${active ? ' active' : ''}`}
+      onClick={() => onSelect(s.sessionId)}
+      disabled={busy}
+    >
+      <span className="sess-title">
+        {title}
+        {pending > 0 && <span className="badge">{pending}</span>}
+      </span>
+      <span className="sess-meta">
+        {s.status === 'running' && <span className="dot running" />}
+        {s.turnCount} turn{s.turnCount === 1 ? '' : 's'} · {timeAgo(s.updatedAt)}
+      </span>
+    </button>
+  );
+}
+
+export function Sidebar({
+  projects,
+  activeId,
+  busy,
+  pendingCounts,
+  collapsed,
+  titleFor,
+  onSelect,
+  onToggle,
+  onHide,
+  onNewProject,
+  onNewChatIn,
+  onRefresh,
+}: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="side-head">
-        <button className="btn new-chat" onClick={onNew} disabled={busy}>
-          + New chat
+        <button className="btn new-project" onClick={onNewProject} disabled={busy}>
+          + New Project
         </button>
         <button className="btn icon" onClick={onRefresh} disabled={busy} title="Refresh list">
           ⟳
         </button>
       </div>
       <div className="sess-list">
-        {sessions === null && <div className="side-note">Loading sessions…</div>}
-        {sessions !== null && sessions.length === 0 && (
-          <div className="side-note">No sessions yet.</div>
+        {projects === null && <div className="side-note">Loading sessions…</div>}
+        {projects !== null && projects.length === 0 && (
+          <div className="side-note">No projects yet — start one with + New Project.</div>
         )}
-        {sessions?.map((s) => (
-          <button
-            key={s.sessionId}
-            className={`sess-row${s.sessionId === activeId ? ' active' : ''}`}
-            onClick={() => onSelect(s.sessionId)}
-            disabled={busy}
-          >
-            <span className="sess-title">
-              {titleFor(s)}
-              {(pendingCounts[s.sessionId] ?? 0) > 0 && (
-                <span className="badge">{pendingCounts[s.sessionId]}</span>
+        {projects?.map((p) => {
+          const isCollapsed = collapsed[p.id] === true;
+          // Aggregates stay on the collapsed row so running turns and
+          // approval badges are never hidden inside a closed folder.
+          const pending = p.sessions.reduce((n, s) => n + (pendingCounts[s.sessionId] ?? 0), 0);
+          const running = p.sessions.some((s) => s.status === 'running');
+          return (
+            <div key={p.id} className="proj">
+              <div className="proj-row">
+                <button
+                  className="proj-toggle"
+                  onClick={() => onToggle(p.id)}
+                  disabled={busy}
+                  title={p.folder ?? 'Sessions without a working folder'}
+                  aria-expanded={!isCollapsed}
+                >
+                  <span className="proj-chevron">{isCollapsed ? '▸' : '▾'}</span>
+                  <span className="proj-name">{p.name}</span>
+                  {isCollapsed && running && <span className="dot running" />}
+                  {isCollapsed && pending > 0 && <span className="badge">{pending}</span>}
+                </button>
+                <button
+                  className="btn icon proj-add"
+                  onClick={() => onNewChatIn(p.folder)}
+                  disabled={busy}
+                  title={
+                    p.folder
+                      ? `Start a new chat in ${p.folder}`
+                      : 'Start a new chat in the server default folder'
+                  }
+                >
+                  +
+                </button>
+                <button
+                  className="btn icon proj-hide"
+                  onClick={() => onHide(p.folder, p.name)}
+                  disabled={busy}
+                  title={`Hide ${p.name} from the sidebar (its chats are kept)`}
+                >
+                  ×
+                </button>
+              </div>
+              {!isCollapsed && (
+                <div className="proj-sess">
+                  {p.sessions.map((s) => (
+                    <SessionRow
+                      key={s.sessionId}
+                      s={s}
+                      active={s.sessionId === activeId}
+                      busy={busy}
+                      pending={pendingCounts[s.sessionId] ?? 0}
+                      title={titleFor(s)}
+                      onSelect={onSelect}
+                    />
+                  ))}
+                  {p.sessions.length === 0 && (
+                    <div className="side-note">No chats yet — press + to start one.</div>
+                  )}
+                </div>
               )}
-            </span>
-            <span className="sess-meta">
-              {s.status === 'running' && <span className="dot running" />}
-              {s.turnCount} turn{s.turnCount === 1 ? '' : 's'} · {timeAgo(s.updatedAt)}
-            </span>
-          </button>
-        ))}
-      </div>
-      <div className="side-foot">
-        <button
-          className="btn folder"
-          onClick={onNewHere}
-          disabled={busy}
-          title={newChatFolder ? `Start a new chat in ${newChatFolder} right away` : 'Start a new chat in the server default folder'}
-        >
-          {folderBase ? `+ New chat in ${folderBase}` : '+ New chat in folder…'}
-        </button>
+            </div>
+          );
+        })}
       </div>
     </aside>
   );

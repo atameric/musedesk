@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { humanizeError } from '../../src/shared/errors';
+import {
+  humanizeError,
+  infraTurnErrorGuidance,
+  isInfraTurnError,
+} from '../../src/shared/errors';
 
 const IN_USE =
   "Error invoking remote method 'musedesk:session/resume': Error: MSP " +
@@ -38,5 +42,22 @@ describe('humanizeError', () => {
     assert.equal(humanizeError('string failure'), 'string failure');
     const exotic = new Error('MSP {"code":-32603,"message":"weird","data":{"kind":"weirdKind"}}');
     assert.equal(humanizeError(exotic), 'weirdKind: weird');
+  });
+});
+
+describe('infra turn failures', () => {
+  it('flags host-runtime failure classes only', () => {
+    assert.equal(isInfraTurnError('configError'), true);
+    assert.equal(isInfraTurnError('environmentError'), true);
+    assert.equal(isInfraTurnError('launchError'), true);
+    assert.equal(isInfraTurnError('modelError'), false);
+    assert.equal(isInfraTurnError('stepLimit'), false);
+    assert.equal(isInfraTurnError('somethingNew'), false);
+  });
+
+  it('guides infra failures toward a host restart', () => {
+    const guidance = infraTurnErrorGuidance('configError');
+    assert.ok(guidance && guidance.includes('Restart the host'));
+    assert.equal(infraTurnErrorGuidance('modelError'), null);
   });
 });

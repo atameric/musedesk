@@ -50,3 +50,25 @@ export function humanizeError(e: unknown): string {
   if (msp.message) return msp.data?.kind ? `${msp.data.kind}: ${msp.message}` : msp.message;
   return stripped;
 }
+
+/**
+ * Turn failure classes that point at the host runtime rather than the turn
+ * input (`configError` observed live as "invalid run configuration: MCP
+ * startup audit failed; …" with retryable=false). Resending never clears
+ * these — the host process must restart.
+ */
+const INFRA_TURN_KINDS: ReadonlySet<string> = new Set([
+  'configError',
+  'environmentError',
+  'launchError',
+]);
+
+export function isInfraTurnError(kind: string): boolean {
+  return INFRA_TURN_KINDS.has(kind);
+}
+
+/** Recovery guidance for infra turn failures; null when the kind is not infra. */
+export function infraTurnErrorGuidance(kind: string): string | null {
+  if (!isInfraTurnError(kind)) return null;
+  return 'The session runtime is degraded (host-side configuration error). Restart the host, then send again.';
+}

@@ -2,10 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { statSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { probeCliArch, type CliArchKind } from './arch';
 
 export interface MuseInstall {
   binPath: string;
   version: string;
+  /** CPU slices the CLI binary was built for ('unknown' when undetectable). */
+  arch: CliArchKind;
 }
 
 function isExecutable(file: string): boolean {
@@ -69,7 +72,7 @@ export function getMuseVersion(binPath: string): string {
 
 export function discoverMuse(): MuseInstall {
   const binPath = discoverMusePath();
-  return { binPath, version: getMuseVersion(binPath) };
+  return { binPath, version: getMuseVersion(binPath), arch: probeCliArch(binPath) };
 }
 
 /** Pinned expectations generated from the CLI this build was verified against. */

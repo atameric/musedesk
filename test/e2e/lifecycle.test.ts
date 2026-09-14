@@ -66,7 +66,9 @@ describe('MSP lifecycle (echo provider)', () => {
 
     const seen: string[] = [];
     const done = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('turn did not complete in time')), 20000);
+      // CLI 1.2.1 fans out reminderChild sub-sessions per turn and
+      // turn/completed waits for them (~34s observed on echo) — budget 90s.
+      const timer = setTimeout(() => reject(new Error('turn did not complete in time')), 90000);
       host!.onNotification((n) => {
         seen.push(n.method);
         if (n.method === 'turn/completed') {

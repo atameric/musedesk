@@ -115,6 +115,7 @@ function buildMock({ pending }) {
       fingerprintMatch: true,
       error: null,
       fullAccess: false,
+      cliArch: 'arm64',
     }),
     defaultWorkspace: async () => '/Users/demo',
     listSessions: async () => ({ nextCursor: null, sessions: [sessionA(), sessionB()] }),
@@ -169,6 +170,9 @@ function buildMock({ pending }) {
     cancelUserInput: notImplemented('cancelUserInput'),
     pickImages: notImplemented('pickImages'),
     setFullAccess: notImplemented('setFullAccess'),
+    restartHost: notImplemented('restartHost'),
+    gitStatus: notImplemented('gitStatus'),
+    gitDiff: notImplemented('gitDiff'),
     pickWorkspace: notImplemented('pickWorkspace'),
   };
 }

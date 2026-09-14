@@ -26,8 +26,11 @@ const api: MuseDeskBridge = {
     ipcRenderer.invoke(IPC.userInputCancel, { sessionId, userInputId, reason }),
   pickImages: () => ipcRenderer.invoke(IPC.imagePick),
   setFullAccess: (fullAccess) => ipcRenderer.invoke(IPC.hostSetFullAccess, { fullAccess }),
+  restartHost: () => ipcRenderer.invoke(IPC.hostRestart),
   pickWorkspace: (defaultPath) => ipcRenderer.invoke(IPC.workspacePick, { defaultPath }),
   defaultWorkspace: () => ipcRenderer.invoke(IPC.workspaceDefault),
+  gitStatus: (root) => ipcRenderer.invoke(IPC.gitStatus, { root }),
+  gitDiff: (root, path) => ipcRenderer.invoke(IPC.gitDiff, { root, path }),
   onChatEvent: (cb) => {
     const listener = (_e: unknown, frame: ChatEventFrame) => cb(frame);
     ipcRenderer.on(IPC.chatEvent, listener);

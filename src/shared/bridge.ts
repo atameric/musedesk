@@ -1,3 +1,5 @@
+import type { CliArchKind } from '../msp/arch';
+import type { GitStatus } from '../main/git';
 import type {
   ApprovalDecideResult,
   ApprovalListPendingResult,
@@ -33,6 +35,8 @@ export interface HostStatus {
   error: string | null;
   /** True when the host runs with `--disable-sandbox`. */
   fullAccess: boolean;
+  /** CPU slices the `muse` CLI binary was built for ('unknown' when undetectable). */
+  cliArch: CliArchKind;
 }
 
 /** One forwarded MSP view notification (plus synthetic muse/* recovery frames). */
@@ -120,9 +124,15 @@ export interface MuseDeskBridge {
   cancelUserInput(sessionId: string, userInputId: string, reason?: string): Promise<UserInputCancelResult>;
   pickImages(): Promise<AttachmentDraft[]>;
   setFullAccess(fullAccess: boolean): Promise<HostStatus>;
+  /** Restart the host process (same sandbox posture); sessions re-attach after. */
+  restartHost(): Promise<HostStatus>;
   /** Folder dialog; opens at `defaultPath` when it names a usable location. */
   pickWorkspace(defaultPath?: string): Promise<string | null>;
   defaultWorkspace(): Promise<string>;
+  /** Read-only git status snapshot for a workspace root. Never writes. */
+  gitStatus(root: string): Promise<GitStatus>;
+  /** Unified diff of one file (or the tree) against HEAD, byte-capped. */
+  gitDiff(root: string, path?: string): Promise<string>;
   onChatEvent(cb: (frame: ChatEventFrame) => void): () => void;
 }
 

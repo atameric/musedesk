@@ -10,6 +10,9 @@ client-built protocol (MSP over `muse serve` stdio). Chat with streaming
 markdown, tool-call visibility, session history shared with the terminal,
 screenshot attachments, and model / reasoning-effort / approval controls.
 
+Current release: **1.0.0-beta.3** — project sidebar, tasks/changes side
+panel, token + context meters, turn recovery, Apple Silicon-only builds.
+
 ## Screenshots (sample data)
 
 ![MuseDesk chat with sidebar, model controls, and streaming transcript](docs/screenshots/chat.png)
@@ -51,6 +54,7 @@ npm start
 | `npm run typecheck`| `tsc --noEmit`                                            |
 | `npm run lint`     | ESLint over TS/TSX (generated `msp.d.ts` excluded)        |
 | `npm test`         | Unit tests (hermetic, no CLI needed)                      |
+| `npm run check:arch` | Fail when the packaged `.app`/DMGs contain non-arm64 code |
 | `npm run e2e`      | E2E: schema-drift gate + scripted fake-host flows + live `muse serve` lifecycle when auth is available |
 | `npm run screenshots` | Rebuild the renderer and capture the README screenshots headlessly |
 
@@ -70,6 +74,13 @@ same client paths deterministically with no auth, network, or disk.
   Electron-zip extraction on Node 26, so the shim routes that one call
   through the system `unzip`. Same bytes, same layout — remove it once the
   toolchain moves past the incompatibility.
+- Apple Silicon only: every Mach-O slice in the packaged `.app` and DMGs is
+  `arm64` (verified by `npm run check:arch`). At startup the app also probes
+  the `muse` CLI binary's architecture and shows an in-app warning when the
+  CLI is Intel-only (it would run under Rosetta, which Apple is retiring).
+- Build output stays out of Spotlight: a `postPackage` hook writes
+  `.metadata_never_index` into `out/` after every package, so the dev `.app`
+  never surfaces next to the installed one in Spotlight/Launchpad.
 
 ## Chat attachments
 
@@ -83,13 +94,19 @@ the images inline with your prompt and can comment on them.
   the protocol does not echo image bytes back, so thumbnails don't survive
   an app restart (the model still saw them).
 
-## Working folder
+## Projects
 
-**+ New chat** asks for the working folder every time. The dialog opens at
-the last-used folder, so Enter reuses it or pick another one. The sidebar
-footer's **+ New chat in X** instead starts immediately in X without asking.
-Each session works in one folder, fixed when the session starts. The active
-session's folder is shown in the top bar, and your last choice is remembered.
+The sidebar groups every session under its working folder. **+ New Project**
+asks for a folder and adds it to the sidebar; the **+** beside each project
+starts a new chat in that folder right away. Click a project to
+expand/collapse it (the choice is remembered; opening a session reveals
+its project once). The × beside each project hides it from the sidebar
+without touching its sessions — add the folder again to restore them.
+Sessions without a working folder live under
+**default folder**. Each session works in one folder, fixed when the session
+starts; the active session's folder is shown in the top bar. Collapsed
+projects still show a running dot and the summed approval badge, so
+background work is never hidden.
 
 ## Full access
 
@@ -99,6 +116,33 @@ sandbox posture is fixed per host process, toggling it restarts the
 background host and re-attaches your sessions (a second or two; running
 turns block the switch). Enabling asks for confirmation first, and the
 choice is remembered across launches. Only use it for work you trust.
+
+## Turn recovery
+
+If a turn's terminal event is missed on the live stream, the transcript can
+get stuck on Working…: the ⟳ button in the top bar re-reads the active
+session from the server and reconciles it (a silent watchdog does the same
+automatically after a minute without events). When a turn fails with a
+host-runtime error (`configError` and friends — e.g. the MCP startup audit
+failure), the failed-turn banner offers a **Restart host** button that
+restarts `muse serve` and re-attaches your sessions; send again afterwards.
+
+## Context usage
+
+The top bar shows the active session's context-window occupancy (`ctx 42%`)
+once the server reports it — the bar turns amber/red as pressure rises, and
+hovering shows exact token counts. Account-level allowances (hourly/weekly)
+are not exposed by the CLI or the protocol, so they cannot be shown.
+
+## Side panel (Tasks + Changes)
+
+The **Tasks** button in the top bar opens a right-side panel (the choice is
+remembered). **Tasks** shows the agent's live plan for the active session
+(checklist with pending/in-progress/done states). **Changes** shows the
+working folder's git status — branch, changed files with staged/unstaged
+badges, and a per-file diff viewer. Git access is strictly read-only
+(`status`/`diff` only, paths validated and capped). The top bar also shows
+the session's running token total (`tok 245K`, exact split on hover).
 
 ## Protocol pinning
 

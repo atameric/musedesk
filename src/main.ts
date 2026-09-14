@@ -8,6 +8,7 @@ import { ChatManager } from './msp/chat';
 import { imageFileToDraft } from './msp/images';
 import { MAX_ATTACHMENTS } from './shared/limits';
 import { loadPrefs, savePrefs, serveArgsFor } from './main/prefs';
+import { gitDiff, gitStatus } from './main/git';
 import { dialogPathFor } from './main/workspace';
 import { PINNED_CLI_VERSION, PINNED_FINGERPRINT } from './msp/pinned';
 import { IPC } from './shared/channels';
@@ -26,6 +27,7 @@ const status: HostStatus = {
   fingerprintMatch: null,
   error: null,
   fullAccess: false,
+  cliArch: 'unknown',
 };
 
 let host: MspHost | null = null;
@@ -71,6 +73,7 @@ async function startHostWith(opts: { fullAccess: boolean }) {
   try {
     const install = discoverMuse();
     status.cliVersion = install.version;
+    status.cliArch = install.arch;
     const h = new MspHost(install.binPath, 'musedesk', app.getVersion(), serveArgsFor(opts.fullAccess));
     host = h;
     const init = await h.connect();
@@ -172,6 +175,11 @@ ipcMain.handle(IPC.hostSetFullAccess, async (_e, args) => {
   return { ...status };
 });
 
+ipcMain.handle(IPC.hostRestart, async () => {
+  await startHostWith({ fullAccess });
+  return { ...status };
+});
+
 ipcMain.handle(IPC.workspacePick, async (_e, args) => {
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error('no window');
   const picked = await dialog.showOpenDialog(mainWindow, {
@@ -184,6 +192,9 @@ ipcMain.handle(IPC.workspacePick, async (_e, args) => {
 });
 
 ipcMain.handle(IPC.workspaceDefault, () => os.homedir());
+
+ipcMain.handle(IPC.gitStatus, (_e, args) => gitStatus(args?.root));
+ipcMain.handle(IPC.gitDiff, (_e, args) => gitDiff(args?.root, args?.path));
 
 app.on('ready', () => {
   createWindow();
