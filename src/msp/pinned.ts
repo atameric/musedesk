@@ -1,5 +1,5 @@
 // Bundled copies of src/msp/CLI_VERSION.txt and FINGERPRINT.txt.
 // test/unit/pinned.test.ts fails if these drift from the .txt sources.
-export const PINNED_CLI_VERSION = 'Muse Code 1.1.1 (1.1.1-R2514.1)';
+export const PINNED_CLI_VERSION = 'Muse Code 1.2.1 (1.2.1-R2847.1)';
 export const PINNED_FINGERPRINT =
-  'sha256:c669a30c2ee17d63192b227865b424d1d78b5d6c04d9f1c9e9b77b9cf03e6a4f';
+  'sha256:c7ff6c5d1e89cd42f803aea1f05b8e72082f2099685802473eb726903484713b';
