@@ -34,20 +34,24 @@ token counter (see PROGRESS.md). Items below are roughly ordered.
 
 ## Later / product maturity
 
-15. **Parallel-session mission control** — all running sessions on one
-    screen (maestro/Cogpit). Needed when session count outgrows the sidebar.
+15. ~~**Parallel-session mission control**~~ — shipped (Overview button).
 16. **Scheduled routines** — "run tests every morning" (Claude `/schedule`,
     OpenClaw cron). Electron scheduler + headless turns. Large.
-17. **Embedded terminal** — shell next to chat (mastra model). Medium.
+17. **Embedded terminal** — shell next to chat (mastra model). Medium, but
+    needs a native module (`node-pty`) — poor value/effort. Parked.
 18. **Signed build + auto-update + Win/Linux packages** — beta-exit
-    requirements (see PROGRESS "Continuing").
-19. **Command palette (Cmd+K) + shortcuts** — switch session/model, resync,
-    everything keyboard-driven. Medium.
-20. **Voice input** — Aider/damocles have it. Fun, low priority.
+    requirements (see PROGRESS "Continuing"). Needs a paid Apple Developer
+    account + release pipeline.
+19. ~~**Command palette (Cmd+K)**~~ — shipped (sessions, models, effort,
+    resync, restart, panel, view toggle).
+20. **Voice input** — free via macOS system dictation (Fn Fn) in the
+    composer; no dedicated engine planned (Electron has no built-in STT).
 
-## Blocked on the CLI
+## Newly unblocked (CLI 1.3.0)
 
-- **Account allowance bars (5h/weekly)** — exposed nowhere: not in MSP
-  (stable+experimental checked), not in any CLI command, not on disk. The
-  TUI renders it from in-memory provider stream events. Revisit if MSP
-  gains an `account/usage` method (the fingerprint gate will catch it).
+- **Account allowance bars (5h/weekly)** — UNBLOCKED: MSP 1.3.0 ships
+  `usage/read` + `usage/changed` (`SubscriptionUsage`: window percent +
+  reset + duration, weekly percent + reset, tier). Top candidate for the
+  next release.
+- **Skills browser** (item 8) got easier: `skill/list` + `skill/changed`
+  now exist (`SkillCatalogEntry`, `bundled|user|project|plugin` sources).

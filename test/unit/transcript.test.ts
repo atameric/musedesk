@@ -222,6 +222,15 @@ describe('resync from served history', () => {
     assert.equal(snap.items.length, 1);
   });
 
+  it('seeds a live server turn onto a fresh store (resume)', () => {
+    const store = createTranscriptStore();
+    store.resyncFromHistory([userItem('hi'), agentItem('partial', 'inProgress', 1)], 'turn-live');
+    const snap = store.snapshot();
+    assert.equal(snap.activeTurnId, 'turn-live');
+    assert.equal(snap.turns['turn-live'].phase, 'running');
+    assert.equal(snap.items.length, 2);
+  });
+
   it('leaves terminal turns alone', () => {
     const store = startedStore();
     store.apply('turn/completed', {

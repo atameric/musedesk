@@ -1,7 +1,7 @@
 {
   "name": "musedesk",
   "productName": "MuseDesk",
-  "version": "1.0.0-beta.3",
+  "version": "1.0.0-beta.4",
   "description": "Unofficial macOS desktop client for the Muse Code CLI (chat over muse serve)",
   "main": ".vite/build/main.js",
   "private": true,

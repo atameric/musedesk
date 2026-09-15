@@ -33,6 +33,16 @@ describe('humanizeError', () => {
     assert.equal(humanizeError(gone), 'That session no longer exists. Pick another session or start a new chat.');
   });
 
+  it('maps client-side RPC timeouts to host-recovery guidance', () => {
+    const timeout = new Error(
+      "Error invoking remote method 'musedesk:turn/send': Error: MSP request turn/start timed out after 30000ms",
+    );
+    const msg = humanizeError(timeout);
+    assert.ok(msg.includes('host stopped responding'));
+    assert.ok(msg.includes('turn/start'));
+    assert.ok(msg.includes('Restart host'));
+  });
+
   it('passes unknown shapes through with the prefix stripped', () => {
     assert.equal(
       humanizeError(new Error("Error invoking remote method 'musedesk:x': Error: boom")),

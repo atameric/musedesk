@@ -92,4 +92,57 @@ describe('MSP scripted chat flows (fake host)', () => {
       assert.equal(agent?.text, 'gap healed');
     });
   });
+
+  describe('queued submit', () => {
+    let host: MspHost | null = null;
+    let chat: ChatManager | null = null;
+    before(async () => {
+      host = await openFakeScenario('muse_queued', 'queued');
+      chat = new ChatManager(host);
+    });
+    after(async () => {
+      await host?.close();
+    });
+
+    it('acks queued with a pre-minted turn and launches it at the boundary', async () => {
+      const store = createTranscriptStore();
+      const launched: string[] = [];
+      chat!.onEvent((_s, method, params) => {
+        store.apply(method, params);
+        if (method === 'turn/started') launched.push((params as { turnId: string }).turnId);
+      });
+      const started = await chat!.startSession({ providerId: 'echo' });
+      const sid = started.session.sessionId;
+      const first = await chat!.sendTurn(sid, 'first');
+      assert.equal(first.disposition, 'started');
+      const second = await chat!.sendTurn(sid, 'second');
+      assert.equal(second.disposition, 'queued');
+      assert.equal(second.startedNewTurn, false);
+      // Pre-minted turn: distinct from the submitting command.
+      assert.ok(second.turnId && second.turnId !== second.commandId);
+      // The queued submit emits nothing until its launch boundary.
+      await new Promise((r) => setTimeout(r, 300));
+      assert.deepEqual(launched, [first.turnId]);
+      assert.equal(
+        store.snapshot().items.filter((i) => i.kind === 'userMessage').length,
+        1,
+      );
+      // Ending the running turn launches the queued one with its echo.
+      const launchedQueued = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('queued turn never launched')), 10000);
+        chat!.onEvent((_s, method, params) => {
+          if (method === 'turn/completed' && (params as { turnId: string }).turnId === second.turnId) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+      });
+      await chat!.interruptTurn(sid, first.turnId);
+      await launchedQueued;
+      assert.deepEqual(launched, [first.turnId, second.turnId]);
+      const snap = store.snapshot();
+      assert.ok(snap.items.some((i) => i.kind === 'userMessage' && i.text === 'second'));
+      assert.equal(snap.turns[second.turnId].phase, 'completed');
+    });
+  });
 });

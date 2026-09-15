@@ -10,8 +10,9 @@ client-built protocol (MSP over `muse serve` stdio). Chat with streaming
 markdown, tool-call visibility, session history shared with the terminal,
 screenshot attachments, and model / reasoning-effort / approval controls.
 
-Current release: **1.0.0-beta.3** — project sidebar, tasks/changes side
-panel, token + context meters, turn recovery, Apple Silicon-only builds.
+Current release: **1.0.0-beta.4** — command palette, mission control,
+send hardening (queued-row + Sending…), project sidebar, tasks/changes
+side panel, token + context meters, turn recovery, Apple Silicon-only builds.
 
 ## Screenshots (sample data)
 
@@ -31,7 +32,7 @@ with `npm run screenshots` (headless, no CLI or auth needed)._
   their own CLI install and their own membership.
 - Node.js 20+ and npm (for development builds).
 
-This build was verified against `Muse Code 1.2.1 (1.2.1-R2847.1)`. On every
+This build was verified against `Muse Code 1.3.0 (1.3.0-R3057.1)`. On every
 launch the app compares the live protocol fingerprint with the pinned one
 and refuses to drive an unknown protocol.
 
@@ -131,8 +132,9 @@ restarts `muse serve` and re-attaches your sessions; send again afterwards.
 
 The top bar shows the active session's context-window occupancy (`ctx 42%`)
 once the server reports it — the bar turns amber/red as pressure rises, and
-hovering shows exact token counts. Account-level allowances (hourly/weekly)
-are not exposed by the CLI or the protocol, so they cannot be shown.
+hovering shows exact token counts. Account-level allowances (window/weekly)
+are exposed by CLI 1.3.0 (`usage/read`) but not shown in the UI yet —
+planned for the next release.
 
 ## Side panel (Tasks + Changes)
 
@@ -143,6 +145,14 @@ working folder's git status — branch, changed files with staged/unstaged
 badges, and a per-file diff viewer. Git access is strictly read-only
 (`status`/`diff` only, paths validated and capped). The top bar also shows
 the session's running token total (`tok 245K`, exact split on hover).
+
+## Command palette & mission control
+
+**Cmd+K** (or Ctrl+K) opens a command palette: jump to any session, switch
+model or reasoning effort, resync, restart the host, toggle panels. The
+**Overview** button (or palette) opens mission control — every session as
+a card with status, tokens, todos, and pending badges; click to open, Stop
+to interrupt a running turn.
 
 ## Protocol pinning
 

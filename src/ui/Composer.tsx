@@ -12,6 +12,7 @@ export interface PastedImage {
 interface ComposerProps {
   running: boolean;
   disabled: boolean;
+  sending: boolean;
   draft: string;
   shots: AttachmentDraft[];
   onDraftChange: (text: string) => void;
@@ -47,6 +48,7 @@ function readImageFiles(files: FileList | File[]): Promise<PastedImage[]> {
 export function Composer({
   running,
   disabled,
+  sending,
   draft,
   shots,
   onDraftChange,
@@ -59,7 +61,7 @@ export function Composer({
 }: ComposerProps) {
   const send = () => {
     const trimmed = draft.trim();
-    if ((trimmed === '' && shots.length === 0) || disabled) return;
+    if ((trimmed === '' && shots.length === 0) || disabled || sending) return;
     onSend(trimmed);
   };
 
@@ -118,7 +120,9 @@ export function Composer({
           onPaste={(e) => {
             if (!disabled && ingest(e.clipboardData?.files)) e.preventDefault();
           }}
-          placeholder={running ? 'Type to queue a follow-up…' : 'Ask anything… (Enter to send)'}
+          placeholder={
+            sending ? 'Sending…' : running ? 'Type to queue a follow-up…' : 'Ask anything… (Enter to send)'
+          }
           rows={3}
           disabled={disabled}
         />
@@ -127,8 +131,8 @@ export function Composer({
             Stop
           </button>
         ) : (
-          <button className="btn send" onClick={send} disabled={disabled || !canSend}>
-            Send
+          <button className="btn send" onClick={send} disabled={disabled || !canSend || sending}>
+            {sending ? 'Sending…' : 'Send'}
           </button>
         )}
       </div>

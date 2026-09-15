@@ -1,17 +1,37 @@
 import React from 'react';
-import { visibleTranscriptItems, type TranscriptSnapshot } from '../msp/transcript';
+import { visibleTranscriptItems, type FoldedItem, type TranscriptSnapshot } from '../msp/transcript';
 import { infraTurnErrorGuidance, isInfraTurnError } from '../shared/errors';
+import type { QueuedTurn } from '../shared/outbox';
 import { MessageItem } from './MessageItem';
+
+function queuedRow(q: QueuedTurn): FoldedItem {
+  return {
+    itemId: `queued-${q.turnId}`,
+    kind: 'userMessage',
+    status: 'queued',
+    turnId: q.turnId,
+    commandId: q.commandId,
+    revision: 0,
+    text: q.text,
+    summary: [],
+    outputText: '',
+    retracted: false,
+    terminal: false,
+  };
+}
 
 export function ChatView({
   snapshot,
   shotsFor,
   busy,
+  queued,
   onRestartHost,
 }: {
   snapshot: TranscriptSnapshot;
   shotsFor: (commandId?: string) => string[];
   busy: boolean;
+  /** Server-acked submits still waiting for their launch boundary. */
+  queued: QueuedTurn[];
   onRestartHost: (() => void) | null;
 }) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -36,6 +56,11 @@ export function ChatView({
       {snapshot.gap && <div className="banner warn">Catching up with missed updates…</div>}
       {rows.map((item) => (
         <MessageItem key={item.itemId} item={item} shotsFor={shotsFor} />
+      ))}
+      {queued.map((q) => (
+        <div key={q.turnId} className="queued-row">
+          <MessageItem item={queuedRow(q)} shotsFor={shotsFor} flag="queued — starts when the running turn ends" />
+        </div>
       ))}
       {snapshot.activeTurnId && (
         <div className="turn-status running">

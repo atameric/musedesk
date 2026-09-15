@@ -29,12 +29,27 @@ import {
   type SessionTokenTotals,
   type TodoView,
 } from '../shared/sessionStats';
-import { groupSessions, loadProjects, saveProjects, type ProjectStore } from '../shared/projects';
+import {
+  groupSessions,
+  loadProjects,
+  projectName,
+  saveProjects,
+  type ProjectStore,
+} from '../shared/projects';
 import { humanizeError } from '../shared/errors';
+import {
+  addQueuedTurn,
+  classifySendOutcome,
+  takeQueuedTurn,
+  type QueuedTurn,
+} from '../shared/outbox';
 import { ChatView } from './ChatView';
 import { Composer, type PastedImage } from './Composer';
 import { Sidebar, sessionTitle } from './Sidebar';
 import { SidePanel, type PanelTab } from './SidePanel';
+import { CommandPalette } from './CommandPalette';
+import { Overview } from './Overview';
+import type { PaletteCommand } from '../shared/palette';
 import { Suggestions } from './Suggestions';
 import { ControlsBar } from './ControlsBar';
 import { ApprovalDialog } from './ApprovalDialog';
@@ -57,18 +72,6 @@ function StatusScreen({ status }: { status: HostStatus | null }) {
       {!window.musedesk && <p>Waiting for preload bridge…</p>}
     </main>
   );
-}
-
-function seedFromHistory(store: TranscriptStore, history: SessionHistory): string | null {
-  if (history.mode === 'inline' && history.items) {
-    store.seed(history.items);
-    return null;
-  }
-  if ((history.mode === 'snapshot' || history.mode === 'anchoredSnapshot') && history.snapshot) {
-    store.seed(history.snapshot.state.items);
-    return null;
-  }
-  return 'Showing new messages only — older history was not served for this session.';
 }
 
 function itemsFromHistory(history: SessionHistory): Item[] | null {
@@ -113,6 +116,18 @@ interface PanelState {
   open: boolean;
   tab: PanelTab;
 }
+
+// Closed effort vocabulary (mirrors ReasoningEffort) for palette commands.
+const EFFORTS: ReasoningEffort[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+];
 
 function loadPanel(): PanelState {
   try {
@@ -166,14 +181,22 @@ export function App() {
   const [todos, setTodos] = React.useState<Record<string, TodoView[]>>({});
   const [panel, setPanel] = React.useState<PanelState>(loadPanel);
   const [gitNonce, setGitNonce] = React.useState(0);
+  const [view, setView] = React.useState<'chat' | 'overview'>('chat');
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [models, setModels] = React.useState<ModelListResult | null>(null);
   const [effort, setEffortState] = React.useState<ReasoningEffort>(loadEffort);
   const [draft, setDraft] = React.useState('');
   const [lastFolder, setLastFolder] = React.useState<string | null>(null);
   const [projectStore, setProjectStore] = React.useState<ProjectStore>(loadProjects);
   const [shots, setShots] = React.useState<AttachmentDraft[]>([]);
+  // In-flight sendTurn count per session (ack not yet seen) + server-queued
+  // submits (acked, waiting for their launch boundary).
+  const [sending, setSending] = React.useState<Record<string, number>>({});
+  const [queued, setQueued] = React.useState<Record<string, QueuedTurn[]>>({});
   const shotsRef = React.useRef<AttachmentDraft[]>([]);
   const shotsMapRef = React.useRef(new Map<string, string[]>());
+  const queuedRef = React.useRef<Record<string, QueuedTurn[]>>({});
+  const draftRef = React.useRef('');
   const storesRef = React.useRef(new Map<string, TranscriptStore>());
   const activeRef = React.useRef<string | null>(null);
   const bootedRef = React.useRef(false);
@@ -213,6 +236,31 @@ export function App() {
       }
       return { ...prev, [sessionId]: next };
     });
+  }, []);
+
+  const bumpSending = React.useCallback((sessionId: string, delta: number) => {
+    setSending((prev) => {
+      const next = Math.max(0, (prev[sessionId] ?? 0) + delta);
+      if (next === 0) {
+        if (!(sessionId in prev)) return prev;
+        const rest = { ...prev };
+        delete rest[sessionId];
+        return rest;
+      }
+      return { ...prev, [sessionId]: next };
+    });
+  }, []);
+
+  // Cmd/Ctrl+K toggles the command palette from anywhere.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   // Route every live event: transcript stores always, dialogs when active,
@@ -316,6 +364,45 @@ export function App() {
           default:
             break;
         }
+        // A queued submit leaves the outbox when its turn launches (the
+        // server echo takes over) or is reclaimed (restore the draft: the
+        // input never ran).
+        if (
+          (frame.method === 'turn/started' || frame.method === 'turn/unqueued') &&
+          typeof p.turnId === 'string'
+        ) {
+          const turnId = p.turnId;
+          const { list, removed } = takeQueuedTurn(queuedRef.current[frame.sessionId] ?? [], turnId);
+          if (removed) {
+            setQueued((prev) => {
+              const next = { ...prev };
+              if (list.length === 0) delete next[frame.sessionId];
+              else next[frame.sessionId] = list;
+              return next;
+            });
+            if (frame.method === 'turn/unqueued' && isActive) {
+              const composerEmpty = draftRef.current === '';
+              if (composerEmpty) setDraft(removed.text);
+              const urls = shotsMapRef.current.get(removed.commandId) ?? [];
+              if (urls.length > 0 && shotsRef.current.length === 0) {
+                setShots(
+                  urls.map((dataUrl, i) => ({
+                    id: newDraftId(),
+                    name: `restored-${i + 1}.png`,
+                    sizeBytes: Math.floor((dataUrl.length * 3) / 4),
+                    mediaType: /data:([^;]+);/.exec(dataUrl)?.[1] ?? 'image/png',
+                    dataUrl,
+                  })),
+                );
+              }
+              setNotice(
+                composerEmpty
+                  ? 'Queued turn was withdrawn before it started — draft restored.'
+                  : 'Queued turn was withdrawn before it started.',
+              );
+            }
+          }
+        }
         let store = storesRef.current.get(frame.sessionId);
         if (!store) {
           store = createTranscriptStore();
@@ -334,6 +421,14 @@ export function App() {
   React.useEffect(() => {
     shotsRef.current = shots;
   }, [shots]);
+
+  React.useEffect(() => {
+    queuedRef.current = queued;
+  }, [queued]);
+
+  React.useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   const fail = (e: unknown) => setSendError(humanizeError(e));
 
@@ -408,7 +503,13 @@ export function App() {
         storesRef.current.set(sessionId, store);
         try {
           const resumed = await window.musedesk.resumeSession(sessionId, { history: 'inline' });
-          setNotice(seedFromHistory(store, resumed.history));
+          // Seed items AND the server's live turn: a resumed running session
+          // must render its spinner (and arm the watchdog) instead of idle.
+          const served = itemsFromHistory(resumed.history);
+          store.resyncFromHistory(served, resumed.session.activeTurnId);
+          setNotice(
+            served ? null : 'Showing new messages only — older history was not served for this session.',
+          );
           const snapUsage = snapshotContextUsage(resumed.history);
           if (snapUsage) setCtxUsage((prev) => ({ ...prev, [sessionId]: snapUsage }));
           const snapTokens = snapshotTokenUsage(resumed.history);
@@ -658,6 +759,7 @@ export function App() {
   const selectSession = (id: string) => {
     const s = sessions?.find((x) => x.sessionId === id);
     if (s) expandFolder(s.workspaceRoot ?? null);
+    setView('chat');
     return openSession(id);
   };
 
@@ -700,6 +802,7 @@ export function App() {
 
   const send = (text: string) => {
     if (!activeId) return;
+    const sessionId = activeId;
     const attached = shotsRef.current;
     const attachments = attached.map((s) => ({
       base64Data: s.dataUrl.split(',')[1] ?? '',
@@ -709,8 +812,9 @@ export function App() {
     setSendError(null);
     setDraft('');
     setShots([]);
+    bumpSending(sessionId, 1);
     window.musedesk
-      .sendTurn(activeId, text, { reasoningEffort: effort, attachments })
+      .sendTurn(sessionId, text, { reasoningEffort: effort, attachments })
       .then((ack) => {
         if (attached.length > 0) {
           const map = shotsMapRef.current;
@@ -724,12 +828,36 @@ export function App() {
             map.delete(oldest.value);
           }
         }
+        // The ack is the only signal for non-started submits (there is no
+        // turn/queued notification): never clear-and-forget on it.
+        const outcome = classifySendOutcome(ack.disposition);
+        if (outcome === 'queued') {
+          setQueued((prev) => ({
+            ...prev,
+            [sessionId]: addQueuedTurn(prev[sessionId] ?? [], {
+              turnId: ack.turnId,
+              commandId: ack.commandId,
+              text,
+              shotCount: attached.length,
+            }),
+          }));
+          setNotice('Turn queued behind the running turn — it will start when the current turn ends.');
+        } else if (outcome === 'steered') {
+          setNotice('Input steered into the running turn.');
+        } else if (outcome === 'unknown') {
+          setDraft(text);
+          setShots(attached);
+          setNotice(
+            `Send was not started (disposition: ${String(ack.disposition)}) — draft restored. Resync or restart the host and try again.`,
+          );
+        }
       })
       .catch((e: unknown) => {
         setDraft(text);
         setShots(attached);
         fail(e);
-      });
+      })
+      .finally(() => bumpSending(sessionId, -1));
   };
 
   const pickImages = () => {
@@ -821,6 +949,81 @@ export function App() {
   const currentApproval = approvals.length > 0 ? approvals[0] : null;
   const currentPrompt = !currentApproval && prompts.length > 0 ? prompts[0] : null;
 
+  // Built late on purpose: it reads titleFor + handlers declared above.
+  const paletteCommands: PaletteCommand[] = (() => {
+    const cmds: PaletteCommand[] = (sessions ?? []).map((s) => ({
+      id: `go-${s.sessionId}`,
+      title: `Go to ${titleFor(s)}`,
+      detail: s.workspaceRoot ?? 'default folder',
+      run: () => void selectSession(s.sessionId),
+    }));
+    cmds.push(
+      {
+        id: 'view',
+        title: view === 'overview' ? 'Back to chat' : 'Go to mission control',
+        run: () => setView(view === 'overview' ? 'chat' : 'overview'),
+      },
+      { id: 'new-project', title: 'New project…', run: () => void addProject() },
+      ...(active?.workspaceRoot
+        ? [
+            {
+              id: 'new-here',
+              title: `New chat in ${projectName(active.workspaceRoot)}`,
+              run: () => void newChatIn(active.workspaceRoot),
+            } as PaletteCommand,
+          ]
+        : []),
+      { id: 'resync', title: 'Resync active session', run: () => activeId && void resyncSession(activeId, false) },
+      { id: 'restart', title: 'Restart host', run: () => void restartHost() },
+      {
+        id: 'panel',
+        title: panel.open ? 'Hide tasks panel' : 'Show tasks panel',
+        run: () => updatePanel({ open: !panel.open, tab: panel.tab }),
+      },
+      ...(models?.models.map((m) => ({
+        id: `model-${m.modelId}`,
+        title: `Model: ${m.displayLabel ?? m.modelId}`,
+        run: () => changeModel(m.modelId),
+      })) ?? []),
+      ...EFFORTS.map((e) => ({
+        id: `effort-${e}`,
+        title: `Effort: ${e}`,
+        run: () => setEffort(e),
+      })),
+    );
+    return cmds;
+  })();
+
+  const overviewCards = (sessions ?? []).map((s) => ({
+    session: s,
+    title: titleFor(s),
+    folderName: projectName(s.workspaceRoot),
+    running: s.status === 'running',
+    pending: pendingCounts[s.sessionId] ?? 0,
+    tokens: tokTotals[s.sessionId] ?? null,
+    todos: todos[s.sessionId] ?? [],
+  }));
+
+  const stopSession = (id: string) => {
+    window.musedesk.interruptTurn(id).catch(fail);
+  };
+
+  if (view === 'overview') {
+    return (
+      <main className="app">
+        <Overview
+          cards={overviewCards}
+          onOpen={(id) => void selectSession(id)}
+          onStop={stopSession}
+          onBack={() => setView('chat')}
+        />
+        {paletteOpen && (
+          <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+        )}
+      </main>
+    );
+  }
+
   return (
     <main className="app layout">
       <Sidebar
@@ -896,6 +1099,13 @@ export function App() {
           >
             Tasks
           </button>
+          <button
+            className="btn panel-toggle"
+            onClick={() => setView('overview')}
+            title="Mission control: all sessions at a glance"
+          >
+            Overview
+          </button>
         </header>
         {active && (
           <ControlsBar
@@ -925,6 +1135,7 @@ export function App() {
             snapshot={snap}
             shotsFor={shotsFor}
             busy={busy}
+            queued={activeId ? (queued[activeId] ?? []) : []}
             onRestartHost={() => void restartHost()}
           />
         )}
@@ -934,6 +1145,7 @@ export function App() {
         <Composer
           running={!!snap?.activeTurnId}
           disabled={!activeId || busy}
+          sending={activeId ? (sending[activeId] ?? 0) > 0 : false}
           draft={draft}
           shots={shots}
           onDraftChange={setDraft}
@@ -981,6 +1193,9 @@ export function App() {
           folder={active?.workspaceRoot ?? null}
           gitNonce={gitNonce}
         />
+      )}
+      {paletteOpen && (
+        <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
       )}
     </main>
   );

@@ -272,6 +272,87 @@ context/token topbar meters, tasks/changes side panel, read-only git diff
 viewer. Backlog moved to `docs/ROADMAP.md`. Gates: 81 unit, 17 e2e,
 typecheck, lint green; verified against CLI 1.2.1.
 
+## Command palette + mission control
+
+- **Cmd+K palette** (`src/ui/CommandPalette.tsx`, filter in
+  `src/shared/palette.ts`): sessions (title + folder match), view toggle,
+  new project/chat, resync, host restart, panel toggle, per-model and
+  per-effort commands. Esc/↑↓/Enter, click-outside to close.
+- **Mission control** (`src/ui/Overview.tsx`, topbar button): full-window
+  session grid — status dot, turns, tokens, todo x/y, pending badges,
+  per-card Stop (server-side interrupt). Opening any session returns to
+  chat. Live off existing state (no extra polling).
+- Caught by pixel verification: the command list initially read `titleFor`
+  before its declaration (TDZ black screen) — now built after all readers.
+- Proof: 84 unit green, typecheck, lint, 17 e2e green; palette + overview
+  pixels verified via temporarily seeded captures (reverted).
+
+## Send hardening (silent-loss fix)
+
+- Root-caused "sent messages vanish": `send()` cleared the draft before the
+  ack and ignored the `turn/start` ack `disposition` — the only queue signal
+  (the protocol has no `turn/queued` lane). A queued/steered submit, or an
+  ack the runtime never processes, left zero feedback.
+- `src/shared/outbox.ts`: `classifySendOutcome` + queued-list ops. Queued
+  acks now pin a visible "queued" row (cleared at the launch `turn/started`);
+  reclaimed turns (`turn/unqueued`) restore the draft; unknown dispositions
+  restore + notice instead of dropping.
+- Resume seeds the server's live turn (`resyncFromHistory` in place of
+  `seedFromHistory`, removed): resumed running sessions render the spinner
+  and arm the stuck-turn watchdog instead of looking idle.
+- Composer shows "Sending…" until the ack lands (double-submit guard);
+  RPC timeouts now read "The host stopped responding … Restart host (Cmd+K)".
+- Proof: 90 unit green (outbox/errors/resync cases), typecheck, lint,
+  18 e2e green (new fake-host `queued` scenario: queued-ack silence +
+  launch-boundary echo); queued row + Sending… pixels verified via
+  temporarily seeded captures (reverted).
+
+## Empty chat after restart (server-side, not our bug)
+
+- Symptom: after quitting/reopening, session `01a0a12d` (19 turns on disk)
+  renders empty with suggestion cards. Verified read-only: `session/read`
+  serves `history.mode: 'none', noneReason: 'projectionUnavailable'` while
+  `view/page` returns events fine — the history projection is down
+  server-side (post-compaction-install-59 + MCP-degraded runtime), data
+  intact in `session.jsonl` (15,516 records). Any client (incl. the CLI)
+  would show the same gap; live turns still echo.
+- Same window: turn 19 failed instantly with the known infra
+  `configError` ("MCP startup audit failed") — Restart host is the remedy;
+  the fresh host (pid 48785) holds the lease at low CPU.
+- Minor own-UX wart spotted: the "Showing new messages only" notice is set
+  on first resume but cleared (never re-set) when re-selecting a session
+  whose store already exists. Future fix candidate, alongside a `view/page`
+  history fallback (currently unused in the renderer).
+
+## Beta.4 release (1.0.0-beta.4)
+
+Shipped since beta.3: Cmd+K command palette (sessions, models, effort,
+resync, restart, panel, view toggle), mission-control Overview (session
+grid with status/tokens/todos/badges + per-card Stop), send hardening
+(queued-row pinning, reclaimed-turn draft restore, unknown-disposition
+fail-safe, resume live-turn seeding, Sending… guard, host-timeout
+guidance). Gates: 90 unit, 18 e2e, typecheck, lint green; verified
+against CLI 1.3.0 (re-pinned mid-release, see below).
+
+## CLI 1.3.0 re-pin (mid-beta.4)
+
+- The CLI auto-updated (`~/.local/bin` launcher, hourly channel check)
+  from 1.2.1 to 1.3.0 between gate runs: schema-drift + lifecycle went
+  red exactly as designed (fingerprint `ab69549a…` vs pinned `c7ff6c5d…`).
+- Re-exported `msp.d.ts`, re-pinned `CLI_VERSION.txt`/`FINGERPRINT.txt`/
+  `pinned.ts` (fingerprint confirmed by an independent `initialize`
+  probe, matching the gate's observed value). No code changes needed:
+  the 1.3.0 surface is purely additive (new `skill/*`, `task/*`,
+  `goal/*`, `workflow/*`, `usage/*` methods; `skill/changed`,
+  `session/statusChanged`, `session/viewHealthChanged`, `usage/changed`
+  notifications; `attention`/`lastActivityAt` session fields;
+  `skillNotFound` error kind; `skill` turn-part type). Stringly
+  dispatch + `default:` arms ignore the new notifications safely.
+- Notable: `usage/read` + `usage/changed` expose subscription usage
+  (window + weekly percent, reset times, tier) — the account-allowance
+  UI blocked in every prior release is now buildable. Left for the
+  next task (beta.4 ships the re-pin only).
+
 ## Continuing
 
 - After any CLI upgrade: re-export schema, re-pin, re-run all gates.

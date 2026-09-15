@@ -44,9 +44,12 @@ function GenericItem({ item }: { item: FoldedItem }) {
 export function MessageItem({
   item,
   shotsFor,
+  flag,
 }: {
   item: FoldedItem;
   shotsFor: (commandId?: string) => string[];
+  /** Extra status line under the bubble (e.g. server-queued submits). */
+  flag?: string;
 }) {
   switch (item.kind) {
     case 'userMessage': {
@@ -62,6 +65,7 @@ export function MessageItem({
           )}
           {item.text !== '' && <div className="bubble">{item.text}</div>}
           {item.retracted && <div className="msg-flag">retracted</div>}
+          {flag && <div className="msg-flag">{flag}</div>}
         </div>
       );
     }

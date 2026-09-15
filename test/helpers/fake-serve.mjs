@@ -191,6 +191,73 @@ const SCENARIOS = {
       return false;
     },
   },
+  queued: {
+    running: null,
+    onRequest(method, params, id) {
+      if (method === 'session/start') {
+        result(id, { session: baseSession('sess-queue-1'), viewCursor: nextCursor() });
+        return true;
+      }
+      if (method === 'turn/start') {
+        if (!this.running) {
+          // First submit starts the running turn the second queues behind.
+          this.running = params.commandId;
+          const turnId = params.commandId;
+          result(id, {
+            commandId: params.commandId,
+            disposition: 'started',
+            startedNewTurn: true,
+            status: 'accepted',
+            turnId,
+          });
+          notify('turn/started', { commandId: params.commandId, sessionId: params.sessionId, turnId });
+          notify('item/started', {
+            item: userItem(params.sessionId, turnId, 'first'),
+            sessionId: params.sessionId,
+          });
+          return true;
+        }
+        // Busy submit: queued ack with a pre-minted turn id and NO events
+        // until the launch boundary (the protocol has no turn/queued lane).
+        result(id, {
+          commandId: params.commandId,
+          disposition: 'queued',
+          startedNewTurn: false,
+          status: 'accepted',
+          turnId: 'queued-turn-1',
+        });
+        return true;
+      }
+      if (method === 'turn/interrupt') {
+        const running = this.running;
+        this.running = null;
+        result(id, { commandId: params.commandId, status: 'accepted', turnId: running });
+        notify('turn/completed', {
+          sessionId: params.sessionId,
+          terminal: 'cancelled',
+          turnId: running,
+        });
+        // Launch boundary: the queued turn starts with its user echo.
+        const turnId = 'queued-turn-1';
+        notify('turn/started', { commandId: 'cmd-queued-1', sessionId: params.sessionId, turnId });
+        notify('item/started', {
+          item: userItem(params.sessionId, turnId, 'second'),
+          sessionId: params.sessionId,
+        });
+        notify('item/completed', {
+          item: { ...userItem(params.sessionId, turnId, 'second'), revision: 2 },
+          sessionId: params.sessionId,
+        });
+        notify('turn/completed', {
+          sessionId: params.sessionId,
+          terminal: 'completed',
+          turnId,
+        });
+        return true;
+      }
+      return false;
+    },
+  },
   history: {
     onRequest(method, params, id) {
       if (method === 'session/list') {

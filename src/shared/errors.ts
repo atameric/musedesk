@@ -31,6 +31,15 @@ function parseMspError(text: string): MspWireError | null {
 export function humanizeError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   const stripped = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '');
+  // Client-side RPC timeout (host.ts): the host stopped answering mid-flight.
+  // Not an MSP wire error, so it never reaches parseMspError below.
+  const timedOut = /MSP request (\S+) timed out after \d+\s*ms/.exec(stripped);
+  if (timedOut) {
+    return (
+      `The host stopped responding (${timedOut[1]} timed out). ` +
+      'Try ⟳ Resync, or Restart host (Cmd+K) if it persists.'
+    );
+  }
   const msp = parseMspError(stripped);
   if (!msp) return stripped;
   switch (msp.data?.kind) {
