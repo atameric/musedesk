@@ -105,36 +105,93 @@ function notImplemented(name) {
   };
 }
 
-function buildMock({ pending }) {
+const SAMPLE_DIFFS = {
+  'src/msp/host.ts': [
+    'diff --git a/src/msp/host.ts b/src/msp/host.ts',
+    '--- a/src/msp/host.ts',
+    '+++ b/src/msp/host.ts',
+    '@@ -40,6 +40,9 @@',
+    '   if (!connected) {',
+    '+    markOffline();',
+    '     throw lastError();',
+    '   }',
+    '-  return request(id);',
+    '+  const res = await request(id);',
+    '+  noteHealth();',
+    '+  return res;',
+  ].join('\n'),
+  'src/ui/App.tsx': [
+    'diff --git a/src/ui/App.tsx b/src/ui/App.tsx',
+    '--- a/src/ui/App.tsx',
+    '+++ b/src/ui/App.tsx',
+    '@@ -12,4 +12,6 @@',
+    ' import { Sidebar } from "./Sidebar";',
+    '+import { FileList } from "./FileChanges";',
+    ' ',
+    ' export function App() {',
+    '+  // staged sample diff for screenshots',
+  ].join('\n'),
+};
+
+function buildMock({ pending, polished = false }) {
+  const listeners = new Set();
+  let cursor = 1, fullAccess = polished, mode = polished ? 'allowAll' : 'promptUnmatched', modelId = polished ? 'muse-spark-1.3' : 'demo-pro';
+  const pool = [sessionA(), sessionB()];
+  if (polished) {
+    pool[0] = { ...pool[0], workspaceRoot: '/Users/demo/muse', name: 'Arayüzü yenileyelim', firstUserPrompt: 'Kanka, arayüzü daha sade ve özenli olabilir mi?' };
+    pool[1] = { ...pool[1], workspaceRoot: '/Users/demo/muse', name: 'Bağlantı kurtarma' };
+    pool.push(baseSession('c-demo', { workspaceRoot: '/Users/demo/defence-platform', name: 'Çalışma alanı' }), baseSession('d-demo', { workspaceRoot: '/Users/demo/level-editor', name: 'Sahne düzenleyici' }));
+  }
+  const getSession = id => ({ ...(pool.find(s => s.sessionId === id) || pool[0]), modelId, approvalMode: { mode, source: 'user', lastCommandId: null } });
+  const emit = (sessionId, method, params) => { for (const fn of listeners) fn({ sessionId, method, params: { sessionId, viewCursor: 'v' + (++cursor), ...params } }); };
+  const items = () => {
+    if (!polished) return historyItems();
+    const time = new Date(Date.now() - 300000).toISOString();
+    return [
+      { ...historyItems()[0], text: 'Kanka, arayüz daha sade ve özenli olabilir mi?', recordedAt: time },
+      { itemId: 'reasoning-demo', turnId: 'turn-demo-1', kind: 'reasoning', status: 'completed', revision: 1, summary: ['Sohbet, gezinme ve mesaj kutusunun görsel hiyerarşisini düzenliyorum.'], recordedAt: time },
+      ...Array.from({ length: 5 }, (_, i) => ({ itemId: 'tool-demo-' + i, turnId: 'turn-demo-1', kind: 'toolCall', status: 'completed', revision: 1, tool: 'read_file', args: 'src/ui/' + ['App.tsx', 'Sidebar.tsx', 'ChatView.tsx', 'Composer.tsx', 'MessageItem.tsx'][i], visibleOutput: 'File inspected.', recordedAt: time })),
+      { ...historyItems()[1], text: 'Olur kanka. Sohbeti merkeze alan, daha sakin bir düzen öneriyorum.\n\n- **Okunaklı sohbet** — daha güçlü tipografi ve dengeli satır aralığı.\n- **Sade gezinme** — projeler ve sohbetler belirgin bir hiyerarşide.\n- **Daha az gürültü** — işlem detayları tek satırda, ihtiyaç duyunca açılıyor.\n\nModel, çalışma seviyesi ve izinler mesaj kutusunda elinin altında kalıyor.', recordedAt: time },
+      { ...historyItems()[0], itemId: 'second-user', turnId: 'turn-demo-2', text: 'Evet, bu çok daha iyi.', recordedAt: NOW },
+      { ...historyItems()[1], itemId: 'second-agent', turnId: 'turn-demo-2', text: 'Aynı sadeliği diğer ekranlara da taşıyabiliriz.', recordedAt: NOW },
+    ];
+  };
   return {
     getStatus: async () => ({
       state: 'ready',
-      cliVersion: 'Muse Code 1.1.1',
-      serverVersion: 'msp/1.1.1',
+      cliVersion: 'Muse Code 1.4.1',
+      serverVersion: 'msp/1.4.1',
       fingerprint: 'demo-fingerprint',
       fingerprintMatch: true,
       error: null,
-      fullAccess: false,
+      fullAccess,
       cliArch: 'arm64',
     }),
     defaultWorkspace: async () => '/Users/demo',
-    listSessions: async () => ({ nextCursor: null, sessions: [sessionA(), sessionB()] }),
-    resumeSession: async (sessionId) => ({
-      history: { items: historyItems(), mode: 'inline', snapshot: null },
+    listSessions: async () => ({ nextCursor: null, sessions: pool.map(s => getSession(s.sessionId)) }),
+    resumeSession: async (sessionId) => {
+      if (polished) setTimeout(() => {
+        emit(sessionId, 'session/contextUsage', { usedTokens: 52000, windowTokens: 200000, pressure: 'normal' });
+        emit(sessionId, 'session/todoListChanged', { items: [{ text: 'Tasarım sistemini kur', status: 'completed' }, { text: 'Sohbet ve mesaj kutusunu yenile', status: 'completed' }, { text: 'Küçük pencere ve klavye kontrollerini doğrula', status: 'inProgress', activeForm: 'Arayüz kontrolleri doğrulanıyor' }] });
+        emit(sessionId, 'turn/completed', { turnId: 'turn-demo-1', terminal: 'completed', durationMs: 12000 });
+      }, 100);
+      return ({
+      history: { items: sessionId.startsWith('new-') ? [] : items(), mode: 'inline', snapshot: null },
       pendingRequests: pending ? ['appr-demo-1'] : [],
-      session: sessionId === sessionB().sessionId ? sessionB() : sessionA(),
+      session: getSession(sessionId),
       viewCursor: 'v1',
-    }),
+    }); },
     listModels: async () => ({
       models: [
         {
           contextLimit: null,
           cost: null,
           description: null,
-          displayLabel: 'Demo Pro',
-          isActive: true,
+          displayLabel: polished ? 'Muse Spark' : 'Demo Pro',
+          isActive: modelId !== 'demo-lite',
           isDefault: true,
-          modelId: 'demo-pro',
+          modelId: polished ? 'muse-spark-1.3' : 'demo-pro',
+          variants: ['low', 'medium', 'high', 'max'],
           outputLimit: null,
           profileId: null,
           providerId: 'demo',
@@ -144,7 +201,7 @@ function buildMock({ pending }) {
           cost: null,
           description: null,
           displayLabel: 'Demo Lite',
-          isActive: false,
+          isActive: modelId === 'demo-lite',
           isDefault: false,
           modelId: 'demo-lite',
           outputLimit: null,
@@ -157,24 +214,31 @@ function buildMock({ pending }) {
       source: 'fakeCatalog',
     }),
     listPending: async () => (pending ? { approvals: [approvalRequest()], userInputs: [] } : { approvals: [], userInputs: [] }),
-    onChatEvent: () => () => {},
-    startSession: notImplemented('startSession'),
+    onChatEvent: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    startSession: async (config) => { const s = baseSession('new-' + Date.now(), { workspaceRoot: config?.workspaceRoot ?? '/Users/demo/muse' }); pool.unshift(s); return { session: s, viewCursor: 'v1' }; },
     sendTurn: notImplemented('sendTurn'),
     interruptTurn: notImplemented('interruptTurn'),
     pageView: notImplemented('pageView'),
     subscribeView: async () => ({ viewCursor: 'v1' }),
     readSession: notImplemented('readSession'),
-    setModel: notImplemented('setModel'),
-    setApprovalMode: notImplemented('setApprovalMode'),
+    setModel: async (id, model) => { modelId = model.modelId; emit(id, 'session/modelChanged', model); return { commandId: 'model-command', disposition: 'applied' }; },
+    setApprovalMode: async (id, next) => { mode = next; return { effectiveMode: { mode, source: 'user', lastCommandId: null } }; },
     decideApproval: notImplemented('decideApproval'),
     answerUserInput: notImplemented('answerUserInput'),
     cancelUserInput: notImplemented('cancelUserInput'),
-    pickImages: notImplemented('pickImages'),
-    setFullAccess: notImplemented('setFullAccess'),
+    pickImages: async () => [],
+    setFullAccess: async (next) => { fullAccess = next; },
     restartHost: notImplemented('restartHost'),
-    gitStatus: notImplemented('gitStatus'),
-    gitDiff: notImplemented('gitDiff'),
-    pickWorkspace: notImplemented('pickWorkspace'),
+    gitStatus: async () => ({
+      isRepo: true,
+      branch: 'main',
+      files: [
+        { path: 'src/msp/host.ts', staged: 'M', unstaged: 'M' },
+        { path: 'src/ui/App.tsx', staged: ' ', unstaged: 'M' },
+      ],
+    }),
+    gitDiff: async (_root, filePath) => SAMPLE_DIFFS[filePath] ?? '',
+    pickWorkspace: async () => '/Users/demo/muse',
   };
 }
 

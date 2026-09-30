@@ -33,6 +33,8 @@ export interface FoldedItem {
   turnId: string | null;
   /** Set on userMessage/userShell: keys optimistic client state (e.g. shot previews). */
   commandId?: string;
+  /** Durable item clock; absent while the host has not recorded it. */
+  recordedAt?: string;
   revision: number;
   /** userMessage/agentMessage text incl. streamed deltas. */
   text: string;
@@ -75,6 +77,7 @@ export type TurnPhase =
 export interface TurnState {
   turnId: string;
   phase: TurnPhase;
+  durationMs?: number;
   error?: { kind: string; message: string; retryable: boolean };
 }
 
@@ -111,6 +114,7 @@ function foldEntry(e: Entry): FoldedItem {
     status: b.status,
     turnId: b.turnId ?? null,
     commandId: b.commandId,
+    recordedAt: typeof b.recordedAt === 'string' && Number.isFinite(Date.parse(b.recordedAt)) ? b.recordedAt : undefined,
     revision: b.revision,
     text: (b.text ?? '') + (e.deltas.get('text') ?? ''),
     summary: parts,
@@ -224,6 +228,9 @@ export function createTranscriptStore(): TranscriptStore {
           turns[c.turnId] = { turnId: c.turnId, phase: 'cancelled' };
         } else {
           turns[c.turnId] = { turnId: c.turnId, phase: 'completed' };
+        }
+        if (typeof c.durationMs === 'number' && Number.isFinite(c.durationMs) && c.durationMs >= 0) {
+          turns[c.turnId].durationMs = c.durationMs;
         }
         if (activeTurnId === c.turnId) activeTurnId = null;
         return;

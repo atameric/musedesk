@@ -13,6 +13,7 @@ import type {
 } from '../msp/msp';
 import type { TranscriptSnapshot } from '../msp/transcript';
 import { SessionRecovery } from '../msp/recovery';
+import { formatClock, formatDuration } from '../shared/turnMeta';
 import { assertHostRestartable } from '../shared/hostRecovery';
 import {
   contextPct,
@@ -21,7 +22,6 @@ import {
   type SessionContextUsage,
 } from '../shared/contextUsage';
 import {
-  formatTokens,
   parseTokenUsage,
   parseTodoList,
   snapshotTokenUsage,
@@ -51,9 +51,11 @@ import { CommandPalette } from './CommandPalette';
 import { Overview } from './Overview';
 import type { PaletteCommand } from '../shared/palette';
 import { Suggestions } from './Suggestions';
-import { ControlsBar } from './ControlsBar';
+import { copyText } from '../shared/clipboard';
+import { ChatHeader } from './ChatHeader';
 import { ApprovalDialog } from './ApprovalDialog';
 import { UserInputDialog } from './UserInputDialog';
+import { SettingsDialog } from './SettingsDialog';
 
 function StatusScreen({ status, busy, onRestart }: {
   status: HostStatus | null;
@@ -90,12 +92,6 @@ function newDraftId(): string {
     /* fall through */
   }
   return `shot-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function baseName(p: string | null | undefined): string | null {
-  if (!p) return null;
-  const parts = p.split('/').filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : p;
 }
 
 async function waitForReady(): Promise<void> {
@@ -151,6 +147,14 @@ function loadEffort(): ReasoningEffort {
   return 'high';
 }
 
+function loadCollapsed(): boolean {
+  try {
+    return localStorage.getItem('musedesk.sideCollapsed') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function upsertById<T extends { [k in K]: string }, K extends string>(
   list: T[],
   item: T,
@@ -178,6 +182,8 @@ export function App() {
   const [tokTotals, setTokTotals] = React.useState<Record<string, SessionTokenTotals>>({});
   const [todos, setTodos] = React.useState<Record<string, TodoView[]>>({});
   const [panel, setPanel] = React.useState<PanelState>(loadPanel);
+  const [sideCollapsed, setSideCollapsed] = React.useState(loadCollapsed);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [gitNonce, setGitNonce] = React.useState(0);
   const [view, setView] = React.useState<'chat' | 'overview'>('chat');
   const [paletteOpen, setPaletteOpen] = React.useState(false);
@@ -195,6 +201,8 @@ export function App() {
   const shotsMapRef = React.useRef(new Map<string, string[]>());
   const queuedRef = React.useRef<Record<string, QueuedTurn[]>>({});
   const draftRef = React.useRef('');
+  const draftsRef = React.useRef(new Map<string, { text: string; shots: AttachmentDraft[] }>());
+  const draftSessionRef = React.useRef<string | null>(null);
   const recoveryRef = React.useRef<SessionRecovery | null>(null);
   if (!recoveryRef.current) recoveryRef.current = new SessionRecovery(window.musedesk);
   const storesRef = React.useRef(recoveryRef.current.stores);
@@ -204,6 +212,9 @@ export function App() {
   const lastEventRef = React.useRef(new Map<string, number>());
   const resyncAtRef = React.useRef(new Map<string, number>());
   const seenUiCursorsRef = React.useRef(new Map<string, Set<string>>());
+  const seenAtRef = React.useRef(new Map<string, number>());
+  const turnStartRef = React.useRef(new Map<string, number>());
+  const turnDurRef = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
     let live = true;
@@ -258,7 +269,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setPaletteOpen((v) => !v);
+        if (!document.querySelector('[role=dialog]') || document.querySelector('.palette')) setPaletteOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -308,6 +319,7 @@ export function App() {
           case 'turn/started':
             if (typeof p.turnId === 'string') {
               const turnId = p.turnId;
+              turnStartRef.current.set(turnId, Date.now());
               setSessions((prev) => prev?.map((s) => s.sessionId === frame.sessionId
                 ? { ...s, status: 'running', activeTurnId: turnId } : s) ?? prev);
             }
@@ -349,11 +361,15 @@ export function App() {
             }
             break;
           }
+          case 'session/nameChanged':
+            if (typeof p.name === 'string') setSessions((prev) => prev?.map((s) => s.sessionId === frame.sessionId ? { ...s, name: p.name as string } : s) ?? prev);
+            break;
           case 'session/modelChanged':
             if (typeof p.modelId === 'string') {
               const modelId = p.modelId;
+              if (isActive) setModels((prev) => prev ? { ...prev, models: prev.models.map((m) => ({ ...m, isActive: m.modelId === modelId && (typeof p.providerId !== 'string' || m.providerId === p.providerId) })) } : prev);
               setSessions((prev) =>
-                prev ? prev.map((s) => (s.sessionId === frame.sessionId ? { ...s, modelId } : s)) : prev,
+                prev ? prev.map((s) => (s.sessionId === frame.sessionId ? { ...s, modelId, providerId: typeof p.providerId === 'string' ? p.providerId : s.providerId } : s)) : prev,
               );
             }
             break;
@@ -382,6 +398,12 @@ export function App() {
             break;
           }
           case 'turn/completed':
+            if (typeof p.turnId === 'string') {
+              const started = turnStartRef.current.get(p.turnId);
+              if (started !== undefined) {
+                turnDurRef.current.set(p.turnId, Math.max(0, Math.round((Date.now() - started) / 1000)));
+              }
+            }
             setSessions((prev) => prev?.map((s) => s.sessionId === frame.sessionId && s.activeTurnId === p.turnId
               ? { ...s, status: 'idle', activeTurnId: null } : s) ?? prev);
             // Files may have changed — refresh the Changes tab when it is live.
@@ -454,17 +476,35 @@ export function App() {
     activeRef.current = activeId;
   }, [activeId]);
 
-  React.useEffect(() => {
-    shotsRef.current = shots;
-  }, [shots]);
+  React.useLayoutEffect(() => {
+    const previous = draftSessionRef.current;
+    if (previous !== activeId) {
+      if (previous) draftsRef.current.set(previous, { text: draftRef.current, shots: shotsRef.current });
+      const saved = activeId ? draftsRef.current.get(activeId) : undefined;
+      draftRef.current = saved?.text ?? '';
+      shotsRef.current = saved?.shots ?? [];
+      draftSessionRef.current = activeId;
+      setDraft(draftRef.current);
+      setShots(shotsRef.current);
+    } else { draftRef.current = draft; shotsRef.current = shots; }
+  }, [activeId, draft, shots]);
+  React.useEffect(() => { queuedRef.current = queued; }, [queued]);
 
+  // Client-observed clocks: stamp only items of a live turn, so resumed
+  // history never shows a misleading "now".
   React.useEffect(() => {
-    queuedRef.current = queued;
-  }, [queued]);
-
-  React.useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
+    if (!snap?.activeTurnId) return;
+    const seen = seenAtRef.current;
+    const now = Date.now();
+    for (const item of snap.items) {
+      if (item.turnId === snap.activeTurnId && !item.recordedAt && !seen.has(item.itemId)) seen.set(item.itemId, now);
+    }
+    while (seen.size > 2000) {
+      const oldest = seen.keys().next();
+      if (oldest.done) break;
+      seen.delete(oldest.value);
+    }
+  }, [snap]);
 
   const fail = (e: unknown) => setSendError(humanizeError(e));
 
@@ -474,6 +514,17 @@ export function App() {
     (commandId?: string): string[] => (commandId ? (shotsMapRef.current.get(commandId) ?? []) : []),
     [],
   );
+
+  const timeFor = React.useCallback((itemId: string): string | null => {
+    const ms = seenAtRef.current.get(itemId);
+    return ms === undefined ? null : formatClock(ms);
+  }, []);
+
+  const durFor = React.useCallback((turnId: string | null): string | null => {
+    if (!turnId) return null;
+    const s = turnDurRef.current.get(turnId);
+    return s === undefined ? null : formatDuration(s);
+  }, []);
 
   const refresh = React.useCallback(async () => {
     const found: Session[] = [];
@@ -741,6 +792,9 @@ export function App() {
       lastEventRef.current.clear();
       resyncAtRef.current.clear();
       seenUiCursorsRef.current.clear();
+      seenAtRef.current.clear();
+      turnStartRef.current.clear();
+      turnDurRef.current.clear();
       const found = await refresh();
       const id = activeRef.current;
       if (id) await tryOpenSession(id, found);
@@ -774,6 +828,9 @@ export function App() {
       seenUiCursorsRef.current.clear();
       lastEventRef.current.clear();
       resyncAtRef.current.clear();
+      seenAtRef.current.clear();
+      turnStartRef.current.clear();
+      turnDurRef.current.clear();
       setSnap(null);
       setApprovals([]);
       setPrompts([]);
@@ -835,16 +892,54 @@ export function App() {
     setNotice(`"${name}" hidden from the sidebar — add it again with + New Project to restore.`);
   };
 
+  const rememberFolder = (folder: string) => {
+    setLastFolder(folder);
+    try {
+      localStorage.setItem('musedesk.workspace', folder);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
+  const newChat = async () => {
+    try {
+      const folder = active?.workspaceRoot ?? lastFolder;
+      const picked = folder ?? await window.musedesk.pickWorkspace();
+      if (!picked) return;
+      rememberFolder(picked);
+      await newChatIn(picked);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const pickDefaultFolder = async () => {
+    try {
+      const picked = await window.musedesk.pickWorkspace(lastFolder ?? undefined);
+      if (!picked) return;
+      rememberFolder(picked);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const toggleSidebar = () => {
+    setSideCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem('musedesk.sideCollapsed', next ? '1' : '0');
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  };
+
   const addProject = async () => {
     try {
       const picked = await window.musedesk.pickWorkspace(lastFolder ?? undefined);
       if (!picked) return;
-      setLastFolder(picked);
-      try {
-        localStorage.setItem('musedesk.workspace', picked);
-      } catch {
-        /* storage unavailable */
-      }
+      rememberFolder(picked);
       const norm = picked.replace(/\/+$/, '');
       const folders = projectStore.folders.some((f) => f.replace(/\/+$/, '') === norm)
         ? projectStore.folders
@@ -865,12 +960,22 @@ export function App() {
     if (!activeId || status?.state !== 'ready' || busy) return;
     const sessionId = activeId;
     const attached = shotsRef.current;
+    const restoreDraft = () => {
+      const visible = draftSessionRef.current === sessionId;
+      const current = visible ? { text: draftRef.current, shots: shotsRef.current } : draftsRef.current.get(sessionId);
+      const restored = { text: [text, current?.text].filter(Boolean).join('\n\n'), shots: [...attached, ...(current?.shots ?? [])] };
+      draftsRef.current.set(sessionId, restored);
+      if (visible) { setDraft(restored.text); setShots(restored.shots); }
+    };
     const attachments = attached.map((s) => ({
       base64Data: s.dataUrl.split(',')[1] ?? '',
       mediaType: s.mediaType,
     }));
     if (text.trim() === '' && attachments.length === 0) return;
     setSendError(null);
+    draftRef.current = '';
+    shotsRef.current = [];
+    draftsRef.current.set(sessionId, { text: '', shots: [] });
     setDraft('');
     setShots([]);
     bumpSending(sessionId, 1);
@@ -906,26 +1011,26 @@ export function App() {
         } else if (outcome === 'steered') {
           setNotice('Input steered into the running turn.');
         } else if (outcome === 'unknown') {
-          setDraft(text);
-          setShots(attached);
+          restoreDraft();
           setNotice(
             `Send was not started (disposition: ${String(ack.disposition)}) — draft restored. Resync or restart the host and try again.`,
           );
         }
       })
       .catch((e: unknown) => {
-        setDraft(text);
-        setShots(attached);
+        restoreDraft();
         fail(e);
       })
       .finally(() => bumpSending(sessionId, -1));
   };
 
   const pickImages = () => {
+    const owner = activeId;
     window.musedesk
       .pickImages()
       .then((picked) => {
         if (picked.length === 0) return;
+        if (draftSessionRef.current !== owner) { setNotice('Chat changed while selecting images. Please attach them again.'); return; }
         if (shotsRef.current.length + picked.length > MAX_ATTACHMENTS) {
           fail(`up to ${MAX_ATTACHMENTS} images per message`);
           return;
@@ -977,19 +1082,24 @@ export function App() {
     }
   };
 
-  const changeModel = (modelId: string) => {
+  const changeModel = async (modelId: string, providerId?: string) => {
     if (!activeId) return;
-    const entry = models?.models.find((m) => m.modelId === modelId);
+    const entry = models?.models.find((m) => m.modelId === modelId && (!providerId || m.providerId === providerId));
     if (!entry) return;
     const model: ModelSelection = { modelId: entry.modelId, providerId: entry.providerId };
     if (entry.profileId) model.profileId = entry.profileId;
     if (entry.displayLabel) model.displayLabel = entry.displayLabel;
-    window.musedesk.setModel(activeId, model).catch(fail);
+    const sessionId = activeId;
+    try {
+      await window.musedesk.setModel(sessionId, model);
+      const catalog = await window.musedesk.listModels(sessionId);
+      if (activeRef.current === sessionId) setModels(catalog);
+    } catch (e) { fail(e); }
   };
 
-  const changeApprovalMode = (mode: ApprovalMode) => {
+  const changeApprovalMode = async (mode: ApprovalMode) => {
     if (!activeId) return;
-    window.musedesk
+    await window.musedesk
       .setApprovalMode(activeId, mode)
       .then((r) => {
         setSessions((prev) =>
@@ -999,6 +1109,13 @@ export function App() {
         );
       })
       .catch(fail);
+  };
+
+  const copySessionId = () => {
+    if (!active) return;
+    void copyText(active.sessionId).then((ok) =>
+      setNotice(ok ? 'Session ID copied to clipboard.' : 'Copy failed — select the ID manually.'),
+    );
   };
 
   const titleFor = (s: Session): string => {
@@ -1041,10 +1158,11 @@ export function App() {
         title: panel.open ? 'Hide tasks panel' : 'Show tasks panel',
         run: () => updatePanel({ open: !panel.open, tab: panel.tab }),
       },
+      { id: 'settings', title: 'Open settings', run: () => setSettingsOpen(true) },
       ...(models?.models.map((m) => ({
-        id: `model-${m.modelId}`,
+        id: `model-${m.providerId}-${m.modelId}`,
         title: `Model: ${m.displayLabel ?? m.modelId}`,
-        run: () => changeModel(m.modelId),
+        run: (): void => { void changeModel(m.modelId, m.providerId); },
       })) ?? []),
       ...EFFORTS.map((e) => ({
         id: `effort-${e}`,
@@ -1094,6 +1212,16 @@ export function App() {
           onStop={stopSession}
           onBack={() => setView('chat')}
         />
+        {settingsOpen && (
+          <SettingsDialog
+            status={status}
+            lastFolder={lastFolder}
+            busy={busy}
+            onToggleFullAccess={(next) => void toggleFullAccess(next)}
+            onPickFolder={() => void pickDefaultFolder()}
+            onClose={() => setSettingsOpen(false)}
+          />
+        )}
         {paletteOpen && (
           <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
         )}
@@ -1102,7 +1230,7 @@ export function App() {
   }
 
   return (
-    <main className="app layout">
+    <main className={sideCollapsed ? 'app layout side-collapsed' : 'app layout'}>
       <Sidebar
         projects={groups}
         activeId={activeId}
@@ -1110,98 +1238,36 @@ export function App() {
         pendingCounts={pendingCounts}
         collapsed={projectStore.collapsed}
         titleFor={titleFor}
+        status={status}
+        connectionLabel={connectionLabel}
+        onPalette={() => setPaletteOpen(true)}
         onSelect={(id) => void selectSession(id)}
         onToggle={toggleProject}
         onHide={hideProject}
         onNewProject={() => void addProject()}
+        onNewChat={() => void newChat()}
         onNewChatIn={(folder) => void newChatIn(folder)}
+        onOverview={() => setView('overview')}
+        onSettings={() => setSettingsOpen(true)}
+        onCollapse={toggleSidebar}
         onRefresh={() => void refresh().catch(fail)}
       />
       <div className="main">
-        <header className="topbar">
-          <span className="brand">MuseDesk</span>
-          <span className={`pill ${connected ? 'ok' : 'error'}`}>{connectionLabel} · {status?.cliVersion ?? ''}</span>
-          {active && (
-            <span className="ws" title={active.workspaceRoot ?? 'server default'}>
-              {baseName(active.workspaceRoot) ?? 'default folder'}
-            </span>
-          )}
-          <label
-            className={`fullaccess${status?.fullAccess ? ' on' : ''}`}
-            title="Full access runs every session without the shell sandbox. Only for work you trust."
-          >
-            <input
-              type="checkbox"
-              checked={status?.fullAccess ?? false}
-              disabled={busy}
-              onChange={(e) => void toggleFullAccess(e.target.checked)}
-            />
-            Full access
-          </label>
-          {activeCtxPct !== null && activeCtx && activeCtx.windowTokens !== null && (
-            <span
-              className="ctx"
-              title={`Context window: ${activeCtx.usedTokens.toLocaleString()} / ${activeCtx.windowTokens.toLocaleString()} tokens · pressure: ${activeCtx.pressure}`}
-            >
-              <span className="ctx-bar">
-                <span
-                  className={`ctx-fill${activeCtx.pressure === 'blocked' ? ' blocked' : activeCtx.pressure === 'warning' ? ' warn' : ''}`}
-                  style={{ width: `${activeCtxPct}%` }}
-                />
-              </span>
-              <span className="ctx-label">ctx {activeCtxPct}%</span>
-            </span>
-          )}
-          {activeTok && (
-            <span
-              className="tok"
-              title={`Session tokens: ${activeTok.totalTokens.toLocaleString()} total · ${activeTok.promptTokens.toLocaleString()} prompt · ${activeTok.outputTokens.toLocaleString()} output`}
-            >
-              tok {formatTokens(activeTok.totalTokens)}
-            </span>
-          )}
-          {active && <span className="session-id">{active.sessionId.slice(0, 8)}</span>}
-          <button
-            className="btn icon"
-            onClick={() => activeId && void resyncSession(activeId, false)}
-            disabled={busy || !activeId || !connected}
-            title="Re-sync active session with the server"
-          >
-            ⟳
-          </button>
-          {!connected && (
-            <button className="btn small" disabled={busy || status?.state === 'starting'} onClick={() => void restartHost()}>
+        <ChatHeader title={active ? titleFor(active) : 'MuseDesk'} project={active ? projectName(active.workspaceRoot) : null}
+          status={status} busy={busy} sidebarHidden={sideCollapsed} context={activeCtx} contextPct={activeCtxPct}
+          tokens={activeTok} panel={panel} sessionId={activeId} onSidebar={toggleSidebar}
+          onAccess={() => void toggleFullAccess(!(status?.fullAccess ?? false))}
+          onPanel={(tab) => updatePanel({ open: !(panel.open && panel.tab === tab), tab })}
+          onResync={() => activeId && void resyncSession(activeId, false)} onRestart={() => void restartHost()} onCopyId={copySessionId} />
+        {status?.state === 'starting' && <div className="banner">Reconnecting to host…</div>}
+        {status?.state === 'error' && (
+          <div className="banner error">
+            <span>{status?.error ?? 'host error'}</span>
+            <button className="btn small" disabled={busy} onClick={() => void restartHost()}>
               Restart host
             </button>
-          )}
-          <button
-            className={`btn panel-toggle${panel.open ? ' on' : ''}`}
-            onClick={() => updatePanel({ open: !panel.open, tab: panel.tab })}
-            title="Toggle tasks/changes panel"
-          >
-            Tasks
-          </button>
-          <button
-            className="btn panel-toggle"
-            onClick={() => setView('overview')}
-            title="Mission control: all sessions at a glance"
-          >
-            Overview
-          </button>
-        </header>
-        {active && (
-          <ControlsBar
-            session={active}
-            models={models}
-            effort={effort}
-            disabled={busy || !connected}
-            onModelChange={changeModel}
-            onEffortChange={setEffort}
-            onApprovalModeChange={changeApprovalMode}
-          />
+          </div>
         )}
-        {status?.state === 'starting' && <div className="banner">Reconnecting to host…</div>}
-        {status?.state === 'error' && <div className="banner error">{status.error ?? 'host error'}</div>}
         {!status && <div className="banner error">Connection status unavailable. Restart host to reconnect.</div>}
         {recoveryWarning && <div className="banner warn">{recoveryWarning}</div>}
         {status?.cliArch === 'x86_64' && (
@@ -1216,8 +1282,12 @@ export function App() {
         {!snap && !busy && <div className="empty">Select a session or start a new chat.</div>}
         {snap && (
           <ChatView
+            key={activeId}
+            sessionId={activeId ?? ''}
             snapshot={snap}
             shotsFor={shotsFor}
+            timeFor={timeFor}
+            durFor={durFor}
             busy={busy}
             connected={connected}
             queued={activeId ? (queued[activeId] ?? []) : []}
@@ -1233,6 +1303,9 @@ export function App() {
           sending={activeId ? (sending[activeId] ?? 0) > 0 : false}
           draft={draft}
           shots={shots}
+          session={active}
+          models={models}
+          effort={effort}
           onDraftChange={setDraft}
           onSend={send}
           onInterrupt={interrupt}
@@ -1240,6 +1313,9 @@ export function App() {
           onPasteImages={pasteImages}
           onRemoveShot={(id) => setShots(shotsRef.current.filter((s) => s.id !== id))}
           onAttachError={fail}
+          onModelChange={changeModel}
+          onEffortChange={setEffort}
+          onApprovalModeChange={changeApprovalMode}
         />
         {currentApproval && activeId && (
           <ApprovalDialog
@@ -1270,13 +1346,25 @@ export function App() {
           />
         )}
       </div>
+      {panel.open && <button className="panel-backdrop" aria-label="Close inspector" onClick={() => updatePanel({ ...panel, open: false })} />}
       {panel.open && (
         <SidePanel
+          onClose={() => updatePanel({ ...panel, open: false })}
           tab={panel.tab}
           onTab={(tab) => updatePanel({ open: true, tab })}
           todos={activeTodos}
           folder={active?.workspaceRoot ?? null}
           gitNonce={gitNonce}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          status={status}
+          lastFolder={lastFolder}
+          busy={busy}
+          onToggleFullAccess={(next) => void toggleFullAccess(next)}
+          onPickFolder={() => void pickDefaultFolder()}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
       {paletteOpen && (

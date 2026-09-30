@@ -1,4 +1,5 @@
 import React from 'react';
+import { Modal } from './Primitives';
 import type { ApprovalChoice, ApprovalRequestParams, ApprovalSubject } from '../msp/msp';
 import { humanizeError } from '../shared/errors';
 
@@ -74,12 +75,8 @@ export function ApprovalDialog({ request, queueCount, onDecide, onRefresh }: App
   };
 
   return (
-    <div className="overlay">
-      <div className="dialog">
-        <div className="dlg-head">
-          <strong>Approval needed</strong>
-          {queueCount > 1 && <span className="pill">+{queueCount - 1} more</span>}
-        </div>
+    <Modal title="Approval needed">
+        {queueCount > 1 && <span className="pill">+{queueCount - 1} more</span>}
         <div className="dlg-tool">
           {request.toolName}
           {stage && (
@@ -131,7 +128,6 @@ export function ApprovalDialog({ request, queueCount, onDecide, onRefresh }: App
         {request.availableChoices.length === 0 && (
           <div className="banner warn">No choices offered by the server.</div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

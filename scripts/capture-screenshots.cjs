@@ -1,80 +1,55 @@
-// Capture the README screenshots with headless Chrome against the canned
-// mock bridge (no CLI, no auth, no real sessions). Usage:
-//   npx vite build && node scripts/capture-screenshots.cjs
-// or simply: npm run screenshots
-// Set CHROME_BIN to override the browser path.
+// Local canned renderer QA; never loads a real CLI or credentials.
 'use strict';
-
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { execFileSync } = require('node:child_process');
-
-const CHROME =
-  process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-
-const SHOTS = [
-  { name: 'chat', pending: false },
-  { name: 'approval', pending: true },
-];
-
-function stageShotHtml(projectRoot, stageDir, pending) {
-  const html = fs.readFileSync(path.join(projectRoot, 'dist', 'index.html'), 'utf8');
-  const mockSrc = fs
-    .readFileSync(path.join(projectRoot, 'scripts', 'mock-bridge.cjs'), 'utf8')
-    .split('module.exports')[0];
-  const mockTag =
-    `<script>\n${mockSrc}\nwindow.musedesk = buildMock({ pending: ${pending} });\n</script>\n`;
-  const staged = mockTag + html.split('"/assets/').join('"./assets/');
-  const file = path.join(stageDir, pending ? 'shot-approval.html' : 'shot-chat.html');
-  fs.writeFileSync(file, staged);
-  return file;
-}
-
-function main() {
-  if (!fs.existsSync(CHROME)) {
-    console.error(`Chrome not found at ${CHROME} (set CHROME_BIN to override)`);
-    process.exit(2);
-  }
-  const projectRoot = path.resolve(__dirname, '..');
-  if (!fs.existsSync(path.join(projectRoot, 'dist', 'index.html'))) {
-    console.error('dist/ is missing — run `npx vite build` first (or `npm run screenshots`)');
-    process.exit(2);
-  }
-  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'musedesk-shot-'));
+const { openBrowser } = require('./browser-qa.cjs');
+async function main() {
+  const root = path.resolve(__dirname, '..');
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'musedesk-shot-'));
+  let browser;
   try {
-    fs.cpSync(path.join(projectRoot, 'dist', 'assets'), path.join(stageDir, 'assets'), {
-      recursive: true,
-    });
-    const outDir = path.join(projectRoot, 'docs', 'screenshots');
-    fs.mkdirSync(outDir, { recursive: true });
-    for (const shot of SHOTS) {
-      const htmlFile = stageShotHtml(projectRoot, stageDir, shot.pending);
-      const outPath = path.join(outDir, `${shot.name}.png`);
-      execFileSync(
-        CHROME,
-        [
-          '--headless',
-          // Only local file:// content is ever loaded; disabling Chrome's own
-          // sandbox keeps this working in sandboxed shells and CI containers
-          // where its sandbox init fails.
-          '--no-sandbox',
-          '--disable-gpu',
-          '--hide-scrollbars',
-          '--force-device-scale-factor=1',
-          '--window-size=1440,900',
-          '--allow-file-access-from-files',
-          '--virtual-time-budget=8000',
-          `--screenshot=${outPath}`,
-          `file://${htmlFile}`,
-        ],
-        { stdio: 'inherit', timeout: 60000 },
-      );
-      console.log(`wrote ${outPath} (${fs.statSync(outPath).size} bytes)`);
+    fs.cpSync(path.join(root, 'dist/assets'), path.join(stage, 'assets'), { recursive: true });
+    const html = fs.readFileSync(path.join(root, 'dist/index.html'), 'utf8').replaceAll('"/assets/', '"./assets/');
+    const mock = fs.readFileSync(path.join(root, 'scripts/mock-bridge.cjs'), 'utf8').split('module.exports')[0];
+    const out = path.join(root, 'docs/screenshots'); fs.mkdirSync(out, { recursive: true });
+    for (const pending of [false, true]) {
+      const file = path.join(stage, `shot-${pending}.html`);
+      fs.writeFileSync(file, `<script>${mock}\nlocalStorage.clear();localStorage.setItem('musedesk.effort','max');localStorage.setItem('musedesk.projects',JSON.stringify({folders:[],hidden:[],collapsed:{'/Users/demo/defence-platform':true,'/Users/demo/level-editor':true}}));window.musedesk=buildMock({pending:${pending},polished:true});</script>${html}`);
+      browser = await openBrowser(file, path.join(stage, 'profile-' + pending));
+      await browser.waitFor("document.querySelector('.ctx')?.textContent.includes('26%')");
+      await browser.screenshot(path.join(out, pending ? 'approval.png' : 'chat.png'));
+      if (!pending) {
+        for (const [width, height] of [[960,640],[1280,800],[1920,1080]]) {
+          await browser.resize(width,height); await browser.screenshot(path.join(out, `chat-${width}.png`));
+        }
+        await browser.resize(1440,900);
+        await browser.evaluate("document.querySelector('[aria-label=Changes]').click()");
+        await browser.waitFor("!!document.querySelector('.change-row')");
+        await browser.evaluate("document.querySelector('.change-row').click()");
+        await browser.waitFor("!!document.querySelector('.diff')");
+        await browser.screenshot(path.join(out, 'changes.png'));
+        await browser.evaluate("document.querySelector('[aria-label=\"Close inspector\"]').click();document.querySelector('.side-footer .side-nav-item').click()");
+        await browser.waitFor("!!document.querySelector('.dialog')");
+        await browser.screenshot(path.join(out, 'settings.png'));
+        await browser.evaluate("document.querySelector('[aria-label=\"Close dialog\"]').click();document.querySelector('[aria-label=Tasks]').click()");
+        await browser.waitFor("!!document.querySelector('.task-row')");
+        await browser.screenshot(path.join(out,'tasks.png'));
+        await browser.evaluate("document.querySelector('[aria-label=\"Close inspector\"]').click();document.querySelector('.side-nav-item').click()");
+        await browser.waitFor("!!document.querySelector('.overview')");
+        await browser.screenshot(path.join(out,'overview.png'));
+        await browser.evaluate("document.querySelector('.ov-head .btn').click()");
+        await browser.waitFor("!!document.querySelector('[aria-label=\"Open command palette\"]')");
+        await browser.evaluate("document.querySelector('[aria-label=\"Open command palette\"]').click()");
+        await browser.waitFor("document.activeElement?.classList.contains('palette-input')");
+        await browser.screenshot(path.join(out,'palette.png'));
+        await browser.evaluate("document.querySelector('[aria-label=\"Close dialog\"]').click();document.querySelector('[aria-label=\"More actions\"]').click()");
+        await browser.waitFor("!!document.querySelector('.popup-menu')");
+        await browser.screenshot(path.join(out,'menu.png'));
+      }
+      await browser.close(); browser = null;
     }
-  } finally {
-    fs.rmSync(stageDir, { recursive: true, force: true });
-  }
+    console.log('Screenshots saved to docs/screenshots.');
+  } finally { await browser?.close(); fs.rmSync(stage, { recursive: true, force: true }); }
 }
-
-main();
+main().catch(e => { console.error(e); process.exitCode=1; });

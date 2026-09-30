@@ -48,7 +48,7 @@ it('renderer shows disconnect, unlocks recovery of a stale turn, and reloads pag
         const connected = document.querySelector('.pill')?.textContent.includes('connected') && !document.querySelector('.pill')?.textContent.includes('disconnected');
         const text = document.querySelector('.chat')?.textContent ?? '';
         const restored = text.includes('How do I speed up this test suite?') && text.includes('Shard across cores');
-        document.body.dataset.recoveryProof = String(restarted && connected && restored && !document.querySelector('.turn-status.running') && !document.querySelector('.banner.warn'));
+        document.body.dataset.recoveryProof = String(restarted && connected && restored && !document.querySelector('.turn-status.running') && !document.querySelector('.banner.warn') && !document.querySelector('.changes-card'));
       }, 7500);
     `;
     const html = readFileSync(path.join(dir, 'index.html'), 'utf8').replaceAll('"/assets/', '"./assets/');

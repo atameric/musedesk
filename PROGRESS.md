@@ -399,8 +399,72 @@ against CLI 1.3.0 (re-pinned mid-release, see below).
   fresh beta.4 DMG; checksum, arm64-only check, typecheck, lint, and diff
   whitespace checks passed. Launchpad UI was not inspected directly.
 
+## Interface refresh (modern minimal redesign) — 2026-09-30
+
+- Full renderer redesign toward the approved mockup: neutral dark theme +
+  mint accent, rebuilt sidebar (brand, New chat, chat search, Overview/Tasks
+  nav, projects, Settings, connection footer), slim header (breadcrumb +
+  title, Full-access toggle, context ring, tokens, Tasks/Overview/overflow),
+  unified composer (attach + model/effort/approval selects + send).
+- Transcript: agent blocks with avatar + client-observed clocks, per-turn
+  collapsible tool groups, settled-turn footers (duration + copy), inline
+  Working-tree-changes card with per-file +/− counts from diff text
+  (`src/ui/FileChanges.tsx` also powers the Changes tab). `ControlsBar`
+  removed; no protocol or behavior changes (renderer + existing IPC only).
+- New: Settings dialog (Full access, default folder, CLI/protocol rows),
+  header overflow menu (resync/restart/copy session ID), collapsible
+  sidebar, `+ New chat` with folder picker, `Open settings` palette command.
+- Mock bridge gained sample git data + CLI 1.4.1 version; README screenshots
+  regenerated from the new UI.
+- Fixed alongside: `packaging.test.ts` asserted the removed `postPackage`
+  hook (red on main) — now asserts `outDir: out.noindex` + the DMG marker
+  asset instead.
+- Proof: typecheck, lint, 115 unit, 20 e2e (live CLI 1.4.1, no skips) green;
+  headless captures verified for chat/approval/palette/overview/tasks/
+  changes/settings/menu with zero script errors; packaged `.app` + DMG
+  verified arm64-only.
+- Follow-up: removed the inline Working-tree-changes card from the chat
+  transcript (it repeated the session-wide dirty tree after every answer).
+  Git changes remain in the Tasks panel's Changes tab. Guarded by the
+  headless renderer-recovery test (`.changes-card` must be absent).
+
+## Approved interface polish — 2026-09-30 (beta.5)
+
+- Implemented the approved second reference: charcoal surfaces, mint brand
+  mark and thin SVG icons, neutral New chat, project/chat hierarchy with
+  a mint selection edge, project breadcrumb/title, shield access state,
+  context disclosure, separate Tasks/Changes controls and raised composer.
+- Reasoning and interleaved tool calls share one expandable turn summary.
+  Ordered tool records retain full arguments, output, statuses and errors.
+  Failures open by default; running, stopped, unknown and disconnected work
+  have distinct states. Disconnect never relabels completed history.
+- Message clocks use validated host `recordedAt`; measured `durationMs`
+  survives the transcript fold. Missing historical metadata stays hidden.
+  Answers have clipboard feedback and reversible, bounded local likes.
+- New chat uses the active project/default folder before opening a picker.
+  Text and attachments follow their chat during navigation. A delayed send
+  failure restores the originating draft without overwriting another chat.
+  Images are checked before reading; running turns expose both stop and queue.
+- Model choices preserve provider routing, menu controls handle keyboard
+  navigation, and unsupported model efforts block sending with an explanation.
+  Dialogs trap focus; the command palette no longer hides results after row 12.
+- The inspector overlays narrower windows with focus containment, close and
+  Escape; wide layouts retain an adjacent panel. Sidebar visibility persists.
+  Streaming and resizing keep the latest message in view while preserving
+  a reader's position in history. New arrivals offer a Latest messages control.
+- Verification: clean typecheck/lint, 120 unit tests, 21 e2e tests (including
+  real CLI lifecycle/schema, no skips). Renderer regression also covers image
+  drafts, delayed failures, copy/likes, queue/stop, disconnect and four sizes.
+  Native Electron smoke loads the packaged main/preload/renderer with isolated
+  userData, connects to the actual CLI, reads existing history and checks layout.
+- Sample screenshots cover chat (960/1280/1440/1920), approval, tasks, changes,
+  settings, command palette, overflow and Overview. Private native captures
+  remain outside the repository. beta.5 retains the stable bundle identifier,
+  `.noindex` build root and installer Spotlight marker; no installation is
+  performed automatically.
+
 ## Continuing
 
 - After any CLI upgrade: re-export schema, re-pin, re-run all gates.
 - Next phases (out of v1 scope): signed distribution, auto-update,
-  Windows/Linux packaging, skills browser, git panel.
+  Windows/Linux packaging, skills browser, richer git actions.

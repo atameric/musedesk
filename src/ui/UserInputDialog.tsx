@@ -1,4 +1,5 @@
 import React from 'react';
+import { Modal } from './Primitives';
 import type { UserInputAnswer, UserInputQuestion, UserInputRequestParams } from '../msp/msp';
 import { humanizeError } from '../shared/errors';
 
@@ -101,12 +102,8 @@ export function UserInputDialog({ request, queueCount, onAnswer, onCancel }: Use
   };
 
   return (
-    <div className="overlay">
-      <div className="dialog">
-        <div className="dlg-head">
-          <strong>Input needed · {request.toolName}</strong>
-          {queueCount > 1 && <span className="pill">+{queueCount - 1} more</span>}
-        </div>
+    <Modal title={'Input needed · ' + request.toolName}>
+        {queueCount > 1 && <span className="pill">+{queueCount - 1} more</span>}
         {error && <div className="banner error">{error}</div>}
         {request.questions.map((q, qi) => (
           <div key={q.id} className="q-block">
@@ -158,7 +155,6 @@ export function UserInputDialog({ request, queueCount, onAnswer, onCancel }: Use
             Submit
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

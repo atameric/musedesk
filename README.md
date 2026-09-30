@@ -8,9 +8,10 @@
 MuseDesk is a macOS desktop client for the official `muse` CLI, speaking its
 client-built protocol (MSP over `muse serve` stdio). Chat with streaming
 markdown, tool-call visibility, session history shared with the terminal,
-screenshot attachments, and model / reasoning-effort / approval controls.
+screenshot attachments, and model / reasoning-effort / approval controls in the composer.
 
-Current release: **1.0.0-beta.4** — command palette, mission control,
+Current release: **1.0.0-beta.5** — polished charcoal/mint interface, keyboard menus,
+per-chat drafts, unified activity summaries, local answer likes, command palette, mission control,
 send hardening (queued-row + Sending…), project sidebar, tasks/changes
 side panel, token + context meters, turn recovery, Apple Silicon-only builds.
 
@@ -57,6 +58,7 @@ npm start
 | `npm test`         | Unit tests (hermetic, no CLI needed)                      |
 | `npm run check:arch` | Fail when the packaged `.app`/DMGs contain non-arm64 code |
 | `npm run e2e`      | E2E: schema-drift gate + scripted fake-host flows + live `muse serve` lifecycle when auth is available |
+| `npm run smoke:native` | Load the packaged code in isolated native Electron and check real host connection + layout |
 | `npm run screenshots` | Rebuild the renderer and capture the README screenshots headlessly |
 
 The live lifecycle test needs provider auth (the real host reads the
@@ -85,9 +87,24 @@ same client paths deterministically with no auth, network, or disk.
   installed app. If you built older versions, move the old `out/` folder to
   a folder ending in `.noindex` so its app does not remain searchable.
 
+## Interface controls
+
+- **Tasks** and **Changes** open the corresponding inspector tab. On smaller
+  windows the inspector overlays the chat; Escape or its close icon dismisses it.
+- The context ring opens real context-window and session-token details.
+- Reasoning and tools share one activity summary; open it for the ordered
+  records. Failures expand by default, and stopped work is labelled explicitly.
+- Each answer has copy and reversible like controls. Likes stay on this device
+  and are not sent to a provider.
+- Draft text and image attachments stay with their chat while navigating
+  during the current app run. Stored message clocks and measured durations
+  come from the host; unavailable history metadata is hidden.
+- Search filters chats; **⌘K** opens commands. Menus support arrows, Enter,
+  Escape and Tab, and dialogs keep keyboard focus inside them.
+
 ## Chat attachments
 
-Attach screenshots three ways: the **+ Image** button (file picker), pasting
+Attach screenshots three ways: the **image icon** or **+ → Attach images** (file picker), pasting
 from the clipboard, or dropping files onto the composer. The model receives
 the images inline with your prompt and can comment on them.
 
@@ -100,20 +117,22 @@ the images inline with your prompt and can comment on them.
 ## Projects
 
 The sidebar groups every session under its working folder. **+ New Project**
-asks for a folder and adds it to the sidebar; the **+** beside each project
-starts a new chat in that folder right away. Click a project to
+asks for a folder and adds it to the sidebar; **⋯ → New chat** beside a project
+starts a new chat in that folder right away. **New chat** uses the active
+project, then the remembered default folder, and opens a picker if neither exists. Click a project to
 expand/collapse it (the choice is remembered; opening a session reveals
-its project once). The × beside each project hides it from the sidebar
+its project once). **⋯ → Hide project** hides it from the sidebar
 without touching its sessions — add the folder again to restore them.
 Sessions without a working folder live under
 **default folder**. Each session works in one folder, fixed when the session
-starts; the active session's folder is shown in the top bar. Collapsed
+starts; the active session's folder is shown in the top bar. The search box
+filters chats by title or folder. Collapsed
 projects still show a running dot and the summed approval badge, so
 background work is never hidden.
 
 ## Full access
 
-The **Full access** checkbox in the top bar disables the shell sandbox for
+The **Full access** toggle in the top bar (also in Settings) disables the shell sandbox for
 every session (equivalent to `muse serve --disable-sandbox`). Because the
 sandbox posture is fixed per host process, toggling it restarts the
 background host and re-attaches your sessions (a second or two; running
@@ -128,7 +147,7 @@ a read-only heartbeat also checks the host every 15 seconds and after wake.
 Sending stays disabled while disconnected. Recovery checks current server
 state so a stale Working… indicator cannot block restart of a failed host.
 
-If a turn's terminal event is missed, the ⟳ button re-reads the active
+If a turn's terminal event is missed, **⋯ → Resync session** re-reads the active
 session and reconnects its live stream. A watchdog does the same for all
 silent running sessions after a minute without events, including background
 chats. Recovery failures stay visible. When a turn fails with a
@@ -153,8 +172,8 @@ planned for the next release.
 
 ## Side panel (Tasks + Changes)
 
-The **Tasks** button in the top bar opens a right-side panel (the choice is
-remembered). **Tasks** shows the agent's live plan for the active session
+The **Tasks** and **Changes** buttons open their corresponding inspector
+tab (the choice is remembered). **Tasks** shows the agent's live plan for the active session
 (checklist with pending/in-progress/done states). **Changes** shows the
 working folder's git status — branch, changed files with staged/unstaged
 badges, and a per-file diff viewer. Git access is strictly read-only

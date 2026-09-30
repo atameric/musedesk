@@ -1,4 +1,5 @@
 import React from 'react';
+import { Modal } from './Primitives';
 import { filterCommands, type PaletteCommand } from '../shared/palette';
 
 export function CommandPalette({
@@ -13,6 +14,8 @@ export function CommandPalette({
   const results = React.useMemo(() => filterCommands(commands, query), [commands, query]);
   const selected = results.length === 0 ? 0 : Math.min(index, results.length - 1);
 
+  React.useEffect(() => { document.querySelector('.palette-item.selected')?.scrollIntoView({ block: 'nearest' }); }, [selected]);
+
   const runSelected = () => {
     const cmd = results[selected];
     if (!cmd) return;
@@ -21,11 +24,12 @@ export function CommandPalette({
   };
 
   return (
-    <div className="palette-overlay" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+    <Modal title="Search & commands" onClose={onClose}>
+      <div className="palette">
         <input
           className="palette-input"
           autoFocus
+          aria-label="Search commands and sessions"
           placeholder="Type a command or search sessions…"
           value={query}
           onChange={(e) => {
@@ -47,7 +51,7 @@ export function CommandPalette({
         />
         <div className="palette-list">
           {results.length === 0 && <div className="side-note">No matching commands.</div>}
-          {results.slice(0, 12).map((c, i) => (
+          {results.map((c, i) => (
             <button
               key={c.id}
               className={`palette-item${i === selected ? ' selected' : ''}`}
@@ -63,6 +67,6 @@ export function CommandPalette({
           ))}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

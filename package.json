@@ -1,7 +1,7 @@
 {
   "name": "musedesk",
   "productName": "MuseDesk",
-  "version": "1.0.0-beta.4",
+  "version": "1.0.0-beta.5",
   "description": "Unofficial macOS desktop client for the Muse Code CLI (chat over muse serve)",
   "main": ".vite/build/main.js",
   "private": true,
@@ -19,7 +19,8 @@
     "test": "node --import tsx --test \"test/unit/*.test.ts\"",
     "e2e": "node --import tsx --test --test-concurrency=1 \"test/e2e/*.test.ts\"",
     "check:arch": "sh scripts/check-arch.sh",
-    "screenshots": "npx vite build && node scripts/capture-screenshots.cjs"
+    "screenshots": "npx vite build && node scripts/capture-screenshots.cjs",
+    "smoke:native": "node scripts/electron-smoke.cjs"
   },
   "keywords": [],
   "author": {

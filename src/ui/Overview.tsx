@@ -28,7 +28,7 @@ export function Overview({
   return (
     <div className="overview">
       <header className="ov-head">
-        <span className="brand">Mission control</span>
+        <span className="ov-title">Mission control</span>
         <span className="ov-sub">
           {cards.length} session{cards.length === 1 ? '' : 's'} · {running} running
         </span>
@@ -43,7 +43,7 @@ export function Overview({
           return (
             <div key={c.session.sessionId} className="ov-card">
               <button className="ov-open" onClick={() => onOpen(c.session.sessionId)}>
-                <span className="ov-title">
+                <span className="ov-name">
                   {c.running && <span className="dot running" />}
                   {c.title}
                   {c.pending > 0 && <span className="badge">{c.pending}</span>}

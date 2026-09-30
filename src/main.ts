@@ -39,8 +39,11 @@ let probingHost: MspHost | null = null;
 
 const createWindow = () => {
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 750,
+    width: 1280,
+    height: 800,
+    minWidth: 960,
+    minHeight: 640,
+    backgroundColor: '#202225',
     title: 'MuseDesk',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
