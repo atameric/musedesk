@@ -41,7 +41,7 @@ function sessionA() {
   return baseSession('a1b2c3d4-0000-4000-8000-000000000001', {
     turnCount: 3,
     updatedAt: NOW,
-    workspaceRoot: '/Users/demo/shop',
+    workspaceRoot: '/Users/demo/sample-store',
   });
 }
 
@@ -49,7 +49,7 @@ function sessionB() {
   return baseSession('b2c3d4e5-0000-4000-8000-000000000002', {
     turnCount: 5,
     updatedAt: TWO_HOURS_AGO,
-    workspaceRoot: '/Users/demo/api',
+    workspaceRoot: '/Users/demo/weather-lab',
   });
 }
 
@@ -91,7 +91,7 @@ function approvalRequest() {
     rawArgs: 'npm run build',
     sessionId: sessionA().sessionId,
     sourceRange: { first: { index: 0 }, last: { index: 0 }, stream: { id: 'run-1', kind: 'run' } },
-    subject: { command: 'npm run build', kind: 'shell', workspaceRoot: '/Users/demo/shop' },
+    subject: { command: 'npm run build', kind: 'shell', workspaceRoot: '/Users/demo/sample-store' },
     taskId: 'task-1',
     toolCallId: 'call-1',
     toolName: 'shell',
@@ -138,9 +138,9 @@ function buildMock({ pending, polished = false }) {
   let cursor = 1, fullAccess = polished, mode = polished ? 'allowAll' : 'promptUnmatched', modelId = polished ? 'muse-spark-1.3' : 'demo-pro';
   const pool = [sessionA(), sessionB()];
   if (polished) {
-    pool[0] = { ...pool[0], workspaceRoot: '/Users/demo/muse', name: 'Arayüzü yenileyelim', firstUserPrompt: 'Kanka, arayüzü daha sade ve özenli olabilir mi?' };
-    pool[1] = { ...pool[1], workspaceRoot: '/Users/demo/muse', name: 'Bağlantı kurtarma' };
-    pool.push(baseSession('c-demo', { workspaceRoot: '/Users/demo/defence-platform', name: 'Çalışma alanı' }), baseSession('d-demo', { workspaceRoot: '/Users/demo/level-editor', name: 'Sahne düzenleyici' }));
+    pool[0] = { ...pool[0], workspaceRoot: '/Users/demo/sample-store', name: 'Improve product search', firstUserPrompt: 'How can we make product search easier to use?' };
+    pool[1] = { ...pool[1], workspaceRoot: '/Users/demo/sample-store', name: 'Add a shopping cart' };
+    pool.push(baseSession('c-demo', { workspaceRoot: '/Users/demo/weather-lab', name: 'Forecast cards' }), baseSession('d-demo', { workspaceRoot: '/Users/demo/docs-site', name: 'Getting started guide' }));
   }
   const getSession = id => ({ ...(pool.find(s => s.sessionId === id) || pool[0]), modelId, approvalMode: { mode, source: 'user', lastCommandId: null } });
   const emit = (sessionId, method, params) => { for (const fn of listeners) fn({ sessionId, method, params: { sessionId, viewCursor: 'v' + (++cursor), ...params } }); };
@@ -148,12 +148,12 @@ function buildMock({ pending, polished = false }) {
     if (!polished) return historyItems();
     const time = new Date(Date.now() - 300000).toISOString();
     return [
-      { ...historyItems()[0], text: 'Kanka, arayüz daha sade ve özenli olabilir mi?', recordedAt: time },
-      { itemId: 'reasoning-demo', turnId: 'turn-demo-1', kind: 'reasoning', status: 'completed', revision: 1, summary: ['Sohbet, gezinme ve mesaj kutusunun görsel hiyerarşisini düzenliyorum.'], recordedAt: time },
+      { ...historyItems()[0], text: 'How can we make product search easier to use?', recordedAt: time },
+      { itemId: 'reasoning-demo', turnId: 'turn-demo-1', kind: 'reasoning', status: 'completed', revision: 1, summary: ['Reviewing the search flow, filters, and empty states.'], recordedAt: time },
       ...Array.from({ length: 5 }, (_, i) => ({ itemId: 'tool-demo-' + i, turnId: 'turn-demo-1', kind: 'toolCall', status: 'completed', revision: 1, tool: 'read_file', args: 'src/ui/' + ['App.tsx', 'Sidebar.tsx', 'ChatView.tsx', 'Composer.tsx', 'MessageItem.tsx'][i], visibleOutput: 'File inspected.', recordedAt: time })),
-      { ...historyItems()[1], text: 'Olur kanka. Sohbeti merkeze alan, daha sakin bir düzen öneriyorum.\n\n- **Okunaklı sohbet** — daha güçlü tipografi ve dengeli satır aralığı.\n- **Sade gezinme** — projeler ve sohbetler belirgin bir hiyerarşide.\n- **Daha az gürültü** — işlem detayları tek satırda, ihtiyaç duyunca açılıyor.\n\nModel, çalışma seviyesi ve izinler mesaj kutusunda elinin altında kalıyor.', recordedAt: time },
-      { ...historyItems()[0], itemId: 'second-user', turnId: 'turn-demo-2', text: 'Evet, bu çok daha iyi.', recordedAt: NOW },
-      { ...historyItems()[1], itemId: 'second-agent', turnId: 'turn-demo-2', text: 'Aynı sadeliği diğer ekranlara da taşıyabiliriz.', recordedAt: NOW },
+      { ...historyItems()[1], text: 'Here are three improvements for the sample storefront.\n\n- **Clear filters** — keep category and price controls beside the results.\n- **Helpful empty states** — suggest related products when a search has no matches.\n- **Quick navigation** — let shoppers open results with the keyboard.\n\nThe search field stays visible while browsing, and active filters are easy to reset.', recordedAt: time },
+      { ...historyItems()[0], itemId: 'second-user', turnId: 'turn-demo-2', text: 'Great. Include keyboard navigation too.', recordedAt: NOW },
+      { ...historyItems()[1], itemId: 'second-agent', turnId: 'turn-demo-2', text: 'The checklist includes focus indicators and keyboard navigation.', recordedAt: NOW },
     ];
   };
   return {
@@ -172,7 +172,7 @@ function buildMock({ pending, polished = false }) {
     resumeSession: async (sessionId) => {
       if (polished) setTimeout(() => {
         emit(sessionId, 'session/contextUsage', { usedTokens: 52000, windowTokens: 200000, pressure: 'normal' });
-        emit(sessionId, 'session/todoListChanged', { items: [{ text: 'Tasarım sistemini kur', status: 'completed' }, { text: 'Sohbet ve mesaj kutusunu yenile', status: 'completed' }, { text: 'Küçük pencere ve klavye kontrollerini doğrula', status: 'inProgress', activeForm: 'Arayüz kontrolleri doğrulanıyor' }] });
+        emit(sessionId, 'session/todoListChanged', { items: [{ text: 'Review the sample search flow', status: 'completed' }, { text: 'Design filters and empty states', status: 'completed' }, { text: 'Check focus and keyboard navigation', status: 'inProgress', activeForm: 'Checking keyboard navigation' }] });
         emit(sessionId, 'turn/completed', { turnId: 'turn-demo-1', terminal: 'completed', durationMs: 12000 });
       }, 100);
       return ({
@@ -215,7 +215,7 @@ function buildMock({ pending, polished = false }) {
     }),
     listPending: async () => (pending ? { approvals: [approvalRequest()], userInputs: [] } : { approvals: [], userInputs: [] }),
     onChatEvent: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
-    startSession: async (config) => { const s = baseSession('new-' + Date.now(), { workspaceRoot: config?.workspaceRoot ?? '/Users/demo/muse' }); pool.unshift(s); return { session: s, viewCursor: 'v1' }; },
+    startSession: async (config) => { const s = baseSession('new-' + Date.now(), { workspaceRoot: config?.workspaceRoot ?? '/Users/demo/sample-store' }); pool.unshift(s); return { session: s, viewCursor: 'v1' }; },
     sendTurn: notImplemented('sendTurn'),
     interruptTurn: notImplemented('interruptTurn'),
     pageView: notImplemented('pageView'),
@@ -238,7 +238,7 @@ function buildMock({ pending, polished = false }) {
       ],
     }),
     gitDiff: async (_root, filePath) => SAMPLE_DIFFS[filePath] ?? '',
-    pickWorkspace: async () => '/Users/demo/muse',
+    pickWorkspace: async () => '/Users/demo/sample-store',
   };
 }
 

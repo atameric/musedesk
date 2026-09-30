@@ -52,7 +52,7 @@ it('renderer polish preserves drafts, keyboard menus, likes and responsive inspe
     await b.waitFor("document.querySelectorAll('.thumb').length===1");
     await setDraft('Draft in chat A');
     await b.evaluate("document.querySelectorAll('.sess-row')[1].click()");
-    await b.waitFor("document.querySelector('.conv-title').textContent==='Bağlantı kurtarma'");
+    await b.waitFor("document.querySelector('.conv-title').textContent==='Add a shopping cart'");
     assert.equal(await b.evaluate("document.querySelector('.composer textarea').value"),'');
     assert.equal(await b.evaluate("document.querySelectorAll('.thumb').length"),0);
     await setDraft('Draft in chat B');
@@ -63,7 +63,7 @@ it('renderer polish preserves drafts, keyboard menus, likes and responsive inspe
     await b.evaluate("window.musedesk.sendTurn=()=>new Promise((_,reject)=>{window.qaReject=reject;});document.querySelector('[aria-label=\"Send message\"]').click()");
     await b.waitFor("!!window.qaReject");
     await b.evaluate("document.querySelectorAll('.sess-row')[1].click()");
-    await b.waitFor("document.querySelector('.conv-title').textContent==='Bağlantı kurtarma'");
+    await b.waitFor("document.querySelector('.conv-title').textContent==='Add a shopping cart'");
     await b.evaluate("window.qaReject(new Error('QA delayed send failure'))");
     await b.waitFor("document.querySelector('.banner.error')?.textContent.includes('QA delayed')");
     assert.equal(await b.evaluate("document.querySelector('.composer textarea').value"),'Draft in chat B');
@@ -72,7 +72,7 @@ it('renderer polish preserves drafts, keyboard menus, likes and responsive inspe
     assert.equal(await b.evaluate("document.querySelectorAll('.thumb').length"),1);
     await b.evaluate("Object.defineProperty(navigator,'clipboard',{value:{writeText:async(text)=>{window.qaCopied=text}},configurable:true});document.querySelector('[aria-label=\"Copy answer\"]').click()");
     await b.waitFor("!!window.qaCopied");
-    assert.equal(await b.evaluate<boolean>("window.qaCopied.includes('Okunaklı sohbet') && !window.qaCopied.includes('Evet, bu çok daha iyi.')"),true);
+    assert.equal(await b.evaluate<boolean>("window.qaCopied.includes('Clear filters') && !window.qaCopied.includes('Great. Include keyboard navigation too.')"),true);
     await b.evaluate("document.querySelector('[aria-label=\"Like answer (this device only)\"]').click()");
     assert.equal(await b.evaluate("JSON.parse(localStorage.getItem('musedesk.likes')).length"),1);
     await b.evaluate("document.querySelector('[aria-label=\"Remove like (this device only)\"]').click()");

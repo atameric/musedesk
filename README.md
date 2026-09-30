@@ -17,12 +17,26 @@ side panel, token + context meters, turn recovery, Apple Silicon-only builds.
 
 ## Screenshots (sample data)
 
-![MuseDesk chat with sidebar, model controls, and streaming transcript](docs/screenshots/chat.png)
+### Chat and composer
 
-![MuseDesk approval dialog over a running session](docs/screenshots/approval.png)
+![MuseDesk beta.5 chat, project sidebar, activity summary, and composer controls using fictional sample projects](docs/screenshots/demo-chat.png)
 
-_Screenshots use staged sample data; no real sessions are shown. Regenerate
-with `npm run screenshots` (headless, no CLI or auth needed)._
+### Tasks
+
+![MuseDesk task inspector with an example search improvement checklist](docs/screenshots/demo-tasks.png)
+
+### Changes
+
+![MuseDesk changes inspector with a staged example diff](docs/screenshots/demo-changes.png)
+
+### Approval dialog
+
+![MuseDesk approval dialog with an example build command](docs/screenshots/demo-approval.png)
+
+_All screenshots use fictional demo projects and scripted sample conversations.
+No personal chats, project names, account details, or real session data are used.
+Regenerate with `npm run screenshots` (headless, isolated browser profile;
+no CLI or auth needed)._
 
 ## Requirements
 
