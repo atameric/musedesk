@@ -90,6 +90,7 @@ typings/
 
 # Electron-Forge
 out/
+out.noindex/
 
 # Standalone renderer build (used by `npm run screenshots`)
 dist/

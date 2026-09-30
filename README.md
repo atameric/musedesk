@@ -50,8 +50,8 @@ npm start
 | Command            | What it does                                              |
 | ------------------ | --------------------------------------------------------- |
 | `npm start`        | Run the app in development mode                           |
-| `npm run package`  | Build a runnable `.app` into `out/`                       |
-| `npm run make`     | Build the distributable unsigned `.dmg` into `out/make/`  |
+| `npm run package`  | Build a runnable `.app` into `out.noindex/`                |
+| `npm run make`     | Build the unsigned `.dmg` into `out.noindex/make/`         |
 | `npm run typecheck`| `tsc --noEmit`                                            |
 | `npm run lint`     | ESLint over TS/TSX (generated `msp.d.ts` excluded)        |
 | `npm test`         | Unit tests (hermetic, no CLI needed)                      |
@@ -79,9 +79,11 @@ same client paths deterministically with no auth, network, or disk.
   `arm64` (verified by `npm run check:arch`). At startup the app also probes
   the `muse` CLI binary's architecture and shows an in-app warning when the
   CLI is Intel-only (it would run under Rosetta, which Apple is retiring).
-- Build output stays out of Spotlight: a `postPackage` hook writes
-  `.metadata_never_index` into `out/` after every package, so the dev `.app`
-  never surfaces next to the installed one in Spotlight/Launchpad.
+- Build output uses `out.noindex/` to exclude development app bundles from
+  Spotlight. The DMG also contains `.metadata_never_index` at its volume root
+  to exclude the mounted installer. Neither exclusion is copied into the
+  installed app. If you built older versions, move the old `out/` folder to
+  a folder ending in `.noindex` so its app does not remain searchable.
 
 ## Chat attachments
 
@@ -183,9 +185,13 @@ gates, and re-verify the scripted flows.
 The beta ships an unsigned `.dmg` (signed distribution is a later phase).
 On first launch macOS may block it:
 
-1. Open the `.dmg` and drag **MuseDesk** to Applications.
-2. Right-click (or Control-click) **MuseDesk** → **Open** → **Open** in the dialog.
-3. Subsequent launches work normally (a signed release removes this step).
+1. Quit the previous MuseDesk with **Cmd+Q** if updating.
+2. Open the `.dmg` and drag **MuseDesk** to Applications. Choose **Replace**
+   when updating an existing installation.
+3. Eject **MuseDesk Installer** and open MuseDesk from Applications.
+4. If macOS blocks the first launch, right-click (or Control-click)
+   **MuseDesk** → **Open** → **Open** in the dialog.
+5. Subsequent launches work normally (a signed release removes this step).
 
 ## Security notes
 

@@ -383,6 +383,22 @@ against CLI 1.3.0 (re-pinned mid-release, see below).
   echo turn and exact schema drift check; typecheck and lint passed. The
   updated `.app` was packaged and verified as arm64-only.
 
+## Installer duplicate app entries — 2026-09-30
+
+- The development app under `out/` still appeared in a Spotlight bundle-ID
+  query despite the old folder marker. Forge now writes to `out.noindex/`;
+  moved the existing local build output there and confirmed the development
+  app no longer appears in that query.
+- DMG contents now include `.metadata_never_index` at the installer volume
+  root. Verified the mounted image reports indexing and searching disabled,
+  contains exactly one top-level MuseDesk app and an Applications symlink,
+  and keeps the marker outside the app so the installed copy can be indexed.
+  All Electron helper bundles already have `LSUIElement=true`.
+- Updated architecture checks, ignored output paths, and installation
+  instructions (quit, replace, eject, launch from Applications). Built a
+  fresh beta.4 DMG; checksum, arm64-only check, typecheck, lint, and diff
+  whitespace checks passed. Launchpad UI was not inspected directly.
+
 ## Continuing
 
 - After any CLI upgrade: re-export schema, re-pin, re-run all gates.

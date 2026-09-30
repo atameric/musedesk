@@ -24,14 +24,14 @@ scan_tree() {
   fi
 }
 
-APP="out/MuseDesk-darwin-arm64/MuseDesk.app"
+APP="out.noindex/MuseDesk-darwin-arm64/MuseDesk.app"
 if [ -d "$APP" ]; then
   scan_tree "$APP" "$APP"
 else
   echo "SKIP: $APP not built (run npm run package first)"
 fi
 
-for dmg in out/make/*.dmg; do
+for dmg in out.noindex/make/*.dmg; do
   [ -e "$dmg" ] || continue
   mnt="$(hdiutil attach "$dmg" -nobrowse -readonly 2>/dev/null | tail -1 | cut -f3- || true)"
   if [ -z "${mnt:-}" ] || [ ! -d "$mnt" ]; then
