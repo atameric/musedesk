@@ -24,12 +24,14 @@ export function ChatView({
   snapshot,
   shotsFor,
   busy,
+  connected,
   queued,
   onRestartHost,
 }: {
   snapshot: TranscriptSnapshot;
   shotsFor: (commandId?: string) => string[];
   busy: boolean;
+  connected: boolean;
   /** Server-acked submits still waiting for their launch boundary. */
   queued: QueuedTurn[];
   onRestartHost: (() => void) | null;
@@ -62,10 +64,13 @@ export function ChatView({
           <MessageItem item={queuedRow(q)} shotsFor={shotsFor} flag="queued — starts when the running turn ends" />
         </div>
       ))}
-      {snapshot.activeTurnId && (
+      {snapshot.activeTurnId && connected && (
         <div className="turn-status running">
           <span className="spinner" /> Working…
         </div>
+      )}
+      {snapshot.activeTurnId && !connected && (
+        <div className="turn-status cancelled">Connection lost. Restart host to recover this session.</div>
       )}
       {failedTurn && (
         <div className="turn-status failed">

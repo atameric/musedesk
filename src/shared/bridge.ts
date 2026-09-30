@@ -23,6 +23,7 @@ import type {
   UserInputCancelResult,
   ViewPageDirection,
   ViewPageResult,
+  ViewSubscribeResult,
 } from '../msp/msp';
 
 /** Read-only host status (P0 surface, unchanged). */
@@ -102,6 +103,7 @@ export interface MuseDeskBridge {
   sendTurn(sessionId: string, text: string, opts?: SendTurnOptions): Promise<TurnStartResult>;
   interruptTurn(sessionId: string, turnId?: string, retract?: boolean): Promise<TurnInterruptResult>;
   pageView(sessionId: string, opts?: PageViewOptions): Promise<ViewPageResult>;
+  subscribeView(sessionId: string, after?: string): Promise<ViewSubscribeResult>;
   listSessions(opts?: ListSessionsOptions): Promise<SessionListResult>;
   resumeSession(sessionId: string, opts?: ResumeSessionOptions): Promise<SessionResumeResult>;
   readSession(sessionId: string, excludeItems?: boolean): Promise<SessionReadResult>;

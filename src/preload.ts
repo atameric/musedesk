@@ -10,6 +10,7 @@ const api: MuseDeskBridge = {
   interruptTurn: (sessionId, turnId, retract) =>
     ipcRenderer.invoke(IPC.turnInterrupt, { sessionId, turnId, retract: retract ?? false }),
   pageView: (sessionId, opts) => ipcRenderer.invoke(IPC.viewPage, { sessionId, opts: opts ?? {} }),
+  subscribeView: (sessionId, after) => ipcRenderer.invoke(IPC.viewSubscribe, { sessionId, after }),
   listSessions: (opts) => ipcRenderer.invoke(IPC.sessionList, opts ?? {}),
   resumeSession: (sessionId, opts) =>
     ipcRenderer.invoke(IPC.sessionResume, { sessionId, opts: opts ?? {} }),

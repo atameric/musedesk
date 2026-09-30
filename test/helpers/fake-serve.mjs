@@ -64,6 +64,75 @@ function agentItem(sessionId, turnId, text, status = 'completed', revision = 1) 
 }
 
 const SCENARIOS = {
+  transport: {
+    onRequest(method, params, id) {
+      if (method === 'test/silent') return true;
+      if (method === 'test/exit') process.exit(17);
+      if (method === 'test/utf8') {
+        const bytes = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id, result: 'çalışıyor 🎵' }) + '\n');
+        const split = bytes.indexOf(Buffer.from('ç')) + 1;
+        process.stdout.write(bytes.subarray(0, split));
+        setTimeout(() => process.stdout.write(bytes.subarray(split)), 10);
+        return true;
+      }
+      if (method === 'session/list') {
+        result(id, { sessions: [], nextCursor: null });
+        return true;
+      }
+      return false;
+    },
+  },
+  recovery: {
+    onRequest(method, params, id) {
+      const sessionId = 'sess-recovery', turnId = 'turn-recovery';
+      const frame = (method, viewCursor, extra) => ({ method, params: { sessionId, viewCursor, sourceRange: fakeRange(), ...extra } });
+      if (method === 'session/list') {
+        // A status notification creates a UI cache before the user resumes.
+        send({ jsonrpc: '2.0', method: 'session/statusChanged', params: { sessionId, status: 'idle' } });
+        result(id, { sessions: [{ ...baseSession(sessionId), turnCount: 1 }], nextCursor: null });
+        return true;
+      }
+      if (method === 'session/resume' || method === 'session/read') {
+        result(id, {
+          history: { mode: 'none', noneReason: 'projectionUnavailable', items: null, snapshot: null },
+          session: { ...baseSession(sessionId), turnCount: 1, status: 'running', activeTurnId: turnId },
+          pendingRequests: [], viewCursor: 'v4',
+        });
+        return true;
+      }
+      if (method === 'view/page') {
+        if (params.cursor === undefined) {
+          result(id, { events: [
+            frame('turn/started', 'v1', { turnId }),
+            frame('item/completed', 'v2', { item: userItem(sessionId, turnId, 'saved prompt') }),
+          ], nextCursor: 'v2' });
+        } else {
+          result(id, { events: [
+            frame('item/started', 'v3', { item: agentItem(sessionId, turnId, '', 'inProgress') }),
+            frame('item/updated', 'v4', { item: agentItem(sessionId, turnId, 'saved reply', 'inProgress', 2) }),
+            // The page can include events beyond the metadata snapshot's head.
+            frame('item/updated', 'v5', { item: agentItem(sessionId, turnId, 'saved reply suffix', 'inProgress', 3) }),
+          ], nextCursor: null });
+        }
+        return true;
+      }
+      if (method === 'view/subscribe') {
+        if (params.after !== 'v4') {
+          failure(id, -32602, 'recovery must subscribe at the observed head');
+          return true;
+        }
+        const suffix = frame('item/delta', 'v5', { itemId: `item-agent-${turnId}`, delta: ' suffix' });
+        send({ jsonrpc: '2.0', ...suffix });
+        send({ jsonrpc: '2.0', ...suffix });
+        send({ jsonrpc: '2.0', ...frame('turn/completed', 'v6', {
+          turnId, terminal: 'failed', error: { kind: 'configError', message: 'test runtime failed', retryable: false },
+        }) });
+        result(id, { viewCursor: 'v6' });
+        return true;
+      }
+      return false;
+    },
+  },
   chat: {
     onRequest(method, params, id) {
       if (method === 'session/start') {
@@ -610,7 +679,7 @@ const SCENARIOS = {
 };
 
 function fakeRange() {
-  return { first: { index: 0 }, last: { index: 0 }, stream: { id: 'run-1', kind: 'run' } };
+  return { first: { id: 'record-1', sequence: 0 }, last: { id: 'record-1', sequence: 0 }, stream: { id: 'run-1', kind: 'run' } };
 }
 
 function approvalRequest(sessionId, turnId, approvalId, sourceIndex) {

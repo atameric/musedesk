@@ -9,6 +9,7 @@ export const IPC = {
   turnSend: 'musedesk:turn/send',
   turnInterrupt: 'musedesk:turn/interrupt',
   viewPage: 'musedesk:view/page',
+  viewSubscribe: 'musedesk:view/subscribe',
   sessionList: 'musedesk:session/list',
   sessionResume: 'musedesk:session/resume',
   sessionRead: 'musedesk:session/read',

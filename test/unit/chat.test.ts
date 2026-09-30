@@ -207,5 +207,10 @@ describe('ChatManager', () => {
     await new Promise((r) => setTimeout(r, 10));
     assert.deepEqual(methods, ['view/gap', 'muse/resubscribeFailed']);
     assert.equal(stub.requests.filter((q) => q.method === 'view/subscribe').length, 1);
+    stub.failOn.clear();
+    stub.emit('view/gap', { after: 'v1', next: 'v9', sessionId: 's1' });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(stub.requests.filter((q) => q.method === 'view/subscribe').length, 2);
+    assert.equal(methods.at(-1), 'muse/resubscribed');
   });
 });

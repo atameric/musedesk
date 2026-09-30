@@ -18,6 +18,15 @@ function agentItem(text: string, status = 'inProgress', revision = 1) {
 }
 
 describe('transcript fold', () => {
+  it('keeps a turn event when an advisory status frame shares its cursor', () => {
+    const store = createTranscriptStore();
+    store.apply('session/statusChanged', { sessionId: S, status: 'running', viewCursor: 'shared' });
+    store.apply('turn/started', { sessionId: S, turnId: T, viewCursor: 'shared' });
+    assert.equal(store.snapshot().activeTurnId, T);
+    store.apply('item/delta', { itemId: 'new-item', delta: 'once', viewCursor: 'delta' });
+    store.apply('item/delta', { itemId: 'new-item', delta: 'once', viewCursor: 'delta' });
+    assert.equal(store.snapshot().items[0].text, 'once');
+  });
   it('streams deltas onto the open item and settles on completed', () => {
     const store = createTranscriptStore();
     store.apply('turn/started', { commandId: 'c1', sessionId: S, turnId: T, viewCursor: 'v1' });

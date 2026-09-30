@@ -496,6 +496,11 @@ body {
   border-color: var(--ok);
 }
 
+.pill.error {
+  color: var(--error);
+  border-color: var(--error);
+}
+
 .session-id {
   margin-left: auto;
   font-size: 12px;

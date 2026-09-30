@@ -4,16 +4,16 @@ import { MAX_ATTACHMENTS, MAX_IMAGE_BYTES } from '../shared/limits';
 import type {
   ApprovalMode,
   ApprovalRequestParams,
-  Item,
   ModelListResult,
   ModelSelection,
   ReasoningEffort,
   Session,
-  SessionHistory,
   UserInputAnswer,
   UserInputRequestParams,
 } from '../msp/msp';
-import { createTranscriptStore, type TranscriptSnapshot, type TranscriptStore } from '../msp/transcript';
+import type { TranscriptSnapshot } from '../msp/transcript';
+import { SessionRecovery } from '../msp/recovery';
+import { assertHostRestartable } from '../shared/hostRecovery';
 import {
   contextPct,
   parseContextTriple,
@@ -55,7 +55,11 @@ import { ControlsBar } from './ControlsBar';
 import { ApprovalDialog } from './ApprovalDialog';
 import { UserInputDialog } from './UserInputDialog';
 
-function StatusScreen({ status }: { status: HostStatus | null }) {
+function StatusScreen({ status, busy, onRestart }: {
+  status: HostStatus | null;
+  busy: boolean;
+  onRestart: () => void;
+}) {
   if (!status || status.state === 'starting') {
     return (
       <main className="screen">
@@ -69,17 +73,10 @@ function StatusScreen({ status }: { status: HostStatus | null }) {
       <h1>MuseDesk</h1>
       <p>Host error:</p>
       <pre className="error">{status.error ?? 'unknown error'}</pre>
+      <button className="btn" disabled={busy} onClick={onRestart}>Restart host</button>
       {!window.musedesk && <p>Waiting for preload bridge…</p>}
     </main>
   );
-}
-
-function itemsFromHistory(history: SessionHistory): Item[] | null {
-  if (history.mode === 'inline' && history.items) return history.items;
-  if ((history.mode === 'snapshot' || history.mode === 'anchoredSnapshot') && history.snapshot) {
-    return history.snapshot.state.items;
-  }
-  return null;
 }
 
 // An active turn quieter than this on the live stream is re-read from the
@@ -173,6 +170,7 @@ export function App() {
   const [busy, setBusy] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  const [recoveryWarnings, setRecoveryWarnings] = React.useState<Record<string, string>>({});
   const [approvals, setApprovals] = React.useState<ApprovalRequestParams[]>([]);
   const [prompts, setPrompts] = React.useState<UserInputRequestParams[]>([]);
   const [pendingCounts, setPendingCounts] = React.useState<Record<string, number>>({});
@@ -197,11 +195,15 @@ export function App() {
   const shotsMapRef = React.useRef(new Map<string, string[]>());
   const queuedRef = React.useRef<Record<string, QueuedTurn[]>>({});
   const draftRef = React.useRef('');
-  const storesRef = React.useRef(new Map<string, TranscriptStore>());
+  const recoveryRef = React.useRef<SessionRecovery | null>(null);
+  if (!recoveryRef.current) recoveryRef.current = new SessionRecovery(window.musedesk);
+  const storesRef = React.useRef(recoveryRef.current.stores);
   const activeRef = React.useRef<string | null>(null);
   const bootedRef = React.useRef(false);
+  const restartingRef = React.useRef(false);
   const lastEventRef = React.useRef(new Map<string, number>());
   const resyncAtRef = React.useRef(new Map<string, number>());
+  const seenUiCursorsRef = React.useRef(new Map<string, Set<string>>());
 
   React.useEffect(() => {
     let live = true;
@@ -268,10 +270,48 @@ export function App() {
   React.useEffect(
     () =>
       window.musedesk.onChatEvent((frame) => {
-        lastEventRef.current.set(frame.sessionId, Date.now());
+        if (!frame.sessionId) return;
         const p = (frame.params ?? {}) as Record<string, unknown>;
+        const store = recoveryRef.current!.apply(frame.sessionId, frame.method, frame.params);
+        if (typeof p.viewCursor === 'string') lastEventRef.current.set(frame.sessionId, Date.now());
         const isActive = frame.sessionId === activeRef.current;
+        if (typeof p.viewCursor === 'string') {
+          let seen = seenUiCursorsRef.current.get(frame.sessionId);
+          if (!seen) {
+            seen = new Set<string>();
+            seenUiCursorsRef.current.set(frame.sessionId, seen);
+          }
+          const key = `${frame.method}|${p.viewCursor}`;
+          if (seen.has(key)) {
+            if (isActive) setSnap(store.snapshot());
+            return;
+          }
+          seen.add(key);
+        }
         switch (frame.method) {
+          case 'session/viewHealthChanged':
+            if (p.health === 'unavailable') {
+              setRecoveryWarnings((prev) => ({
+                ...prev,
+                [frame.sessionId]: 'Live updates interrupted. Re-sync this session to recover its history and reconnect.',
+              }));
+              lastEventRef.current.set(frame.sessionId, 0);
+            }
+            break;
+          case 'session/statusChanged':
+            if (typeof p.status === 'string') {
+              const nextStatus = p.status;
+              setSessions((prev) => prev?.map((s) => s.sessionId === frame.sessionId
+                ? { ...s, status: nextStatus } : s) ?? prev);
+            }
+            break;
+          case 'turn/started':
+            if (typeof p.turnId === 'string') {
+              const turnId = p.turnId;
+              setSessions((prev) => prev?.map((s) => s.sessionId === frame.sessionId
+                ? { ...s, status: 'running', activeTurnId: turnId } : s) ?? prev);
+            }
+            break;
           case 'approval/requested':
             if (isActive) {
               setApprovals((prev) => upsertById(prev, p as unknown as ApprovalRequestParams, 'approvalId'));
@@ -342,6 +382,8 @@ export function App() {
             break;
           }
           case 'turn/completed':
+            setSessions((prev) => prev?.map((s) => s.sessionId === frame.sessionId && s.activeTurnId === p.turnId
+              ? { ...s, status: 'idle', activeTurnId: null } : s) ?? prev);
             // Files may have changed — refresh the Changes tab when it is live.
             if (frame.sessionId === activeRef.current) setGitNonce((n) => n + 1);
             break;
@@ -403,12 +445,6 @@ export function App() {
             }
           }
         }
-        let store = storesRef.current.get(frame.sessionId);
-        if (!store) {
-          store = createTranscriptStore();
-          storesRef.current.set(frame.sessionId, store);
-        }
-        store.apply(frame.method, frame.params);
         if (isActive) setSnap(store.snapshot());
       }),
     [bumpPending],
@@ -440,9 +476,19 @@ export function App() {
   );
 
   const refresh = React.useCallback(async () => {
-    const list = await window.musedesk.listSessions({ limit: 50 });
-    setSessions(list.sessions);
-    return list.sessions;
+    const found: Session[] = [];
+    let cursor: string | undefined;
+    const visited = new Set<string>();
+    for (;;) {
+      const list = await window.musedesk.listSessions({ limit: 200, cursor });
+      found.push(...list.sessions);
+      if (!list.nextCursor) break;
+      if (visited.has(list.nextCursor)) throw new Error('Session list paging stopped advancing');
+      visited.add(list.nextCursor);
+      cursor = list.nextCursor;
+    }
+    setSessions(found);
+    return found;
   }, []);
 
   const reconcilePending = React.useCallback(async (sessionId: string) => {
@@ -455,17 +501,22 @@ export function App() {
     }
   }, []);
 
-  // Rebuild the transcript from a point-in-time server read and reconcile the
-  // active turn against it. Read-only server-side (no re-subscribe), so it is
-  // safe to run on a live turn: a no-op when the server agrees it is running.
+  // Read a baseline, recover unavailable history through pages, and replay
+  // the live suffix. This changes no server-side turn or lease state.
   const resyncSession = React.useCallback(async (sessionId: string, auto: boolean) => {
-    const store = storesRef.current.get(sessionId);
-    if (!store) return;
-    setBusy(true);
+    const previous = storesRef.current.get(sessionId);
+    if (!previous) return;
+    if (!auto) setBusy(true);
     try {
-      const read = await window.musedesk.readSession(sessionId, false);
-      const hadActive = store.snapshot().activeTurnId;
-      store.resyncFromHistory(itemsFromHistory(read.history), read.session.activeTurnId);
+      const hadActive = previous.snapshot().activeTurnId;
+      const { result: read, warning } = await recoveryRef.current!.resync(sessionId);
+      const store = storesRef.current.get(sessionId)!;
+      setRecoveryWarnings((prev) => {
+        const next = { ...prev };
+        if (warning) next[sessionId] = warning;
+        else delete next[sessionId];
+        return next;
+      });
       const readUsage = snapshotContextUsage(read.history);
       if (readUsage) setCtxUsage((prev) => ({ ...prev, [sessionId]: readUsage }));
       const readTokens = snapshotTokenUsage(read.history);
@@ -477,7 +528,7 @@ export function App() {
       );
       if (activeRef.current === sessionId) setSnap(store.snapshot());
       const stillActive = store.snapshot().activeTurnId;
-      if (stillActive) lastEventRef.current.set(sessionId, Date.now());
+      if (activeRef.current === sessionId) await reconcilePending(sessionId);
       if (hadActive && hadActive !== stillActive) {
         setNotice(
           auto
@@ -488,45 +539,37 @@ export function App() {
         setNotice('Session re-synced with the server.');
       }
     } catch (e) {
-      if (!auto) setSendError(humanizeError(e));
+      setRecoveryWarnings((prev) => ({ ...prev, [sessionId]: `Re-sync failed: ${humanizeError(e)}` }));
     } finally {
-      setBusy(false);
+      if (!auto) setBusy(false);
     }
-  }, []);
+  }, [reconcilePending]);
 
   // Throws on failure (caller decides: surface or fall through to the next).
   const tryOpenSession = React.useCallback(
     async (sessionId: string, known?: Session[]) => {
-      let store = storesRef.current.get(sessionId);
-      if (!store) {
-        store = createTranscriptStore();
-        storesRef.current.set(sessionId, store);
-        try {
-          const resumed = await window.musedesk.resumeSession(sessionId, { history: 'inline' });
-          // Seed items AND the server's live turn: a resumed running session
-          // must render its spinner (and arm the watchdog) instead of idle.
-          const served = itemsFromHistory(resumed.history);
-          store.resyncFromHistory(served, resumed.session.activeTurnId);
-          setNotice(
-            served ? null : 'Showing new messages only — older history was not served for this session.',
-          );
-          const snapUsage = snapshotContextUsage(resumed.history);
-          if (snapUsage) setCtxUsage((prev) => ({ ...prev, [sessionId]: snapUsage }));
-          const snapTokens = snapshotTokenUsage(resumed.history);
-          if (snapTokens) setTokTotals((prev) => ({ ...prev, [sessionId]: snapTokens }));
-          const snapTodos = snapshotTodoList(resumed.history);
-          if (snapTodos) setTodos((prev) => ({ ...prev, [sessionId]: snapTodos }));
-          setSessions((prev) =>
-            prev ? prev.map((s) => (s.sessionId === sessionId ? resumed.session : s)) : (known ?? null),
-          );
-          if (resumed.pendingRequests.length > 0) await reconcilePending(sessionId);
-        } catch (e) {
-          storesRef.current.delete(sessionId);
-          throw e;
-        }
+      if (!recoveryRef.current!.isHydrated(sessionId)) {
+        const { result: resumed, warning } = await recoveryRef.current!.open(sessionId);
+        setRecoveryWarnings((prev) => {
+          const next = { ...prev };
+          if (warning) next[sessionId] = warning;
+          else delete next[sessionId];
+          return next;
+        });
+        const snapUsage = snapshotContextUsage(resumed.history);
+        if (snapUsage) setCtxUsage((prev) => ({ ...prev, [sessionId]: snapUsage }));
+        const snapTokens = snapshotTokenUsage(resumed.history);
+        if (snapTokens) setTokTotals((prev) => ({ ...prev, [sessionId]: snapTokens }));
+        const snapTodos = snapshotTodoList(resumed.history);
+        if (snapTodos) setTodos((prev) => ({ ...prev, [sessionId]: snapTodos }));
+        setSessions((prev) =>
+          prev ? prev.map((s) => (s.sessionId === sessionId ? resumed.session : s)) : (known ?? null),
+        );
       }
+      await reconcilePending(sessionId);
+      activeRef.current = sessionId;
       setActiveId(sessionId);
-      setSnap(store.snapshot());
+      setSnap(recoveryRef.current!.storeFor(sessionId).snapshot());
     },
     [reconcilePending],
   );
@@ -573,7 +616,7 @@ export function App() {
   // Boot: open the newest resumable session (skipping ones held by other
   // windows), or start fresh when none opens.
   React.useEffect(() => {
-    if (status?.state !== 'ready' || bootedRef.current) return;
+    if (status?.state !== 'ready' || bootedRef.current || restartingRef.current) return;
     bootedRef.current = true;
     (async () => {
       setBusy(true);
@@ -602,14 +645,16 @@ export function App() {
             expandFolder(s.workspaceRoot ?? null);
             opened = true;
             break;
-          } catch {
-            /* in use or stale — try the next most recent */
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            if (!/sessionInUse|already in use|sessionNotFound|session .*not found/i.test(message)) throw e;
           }
         }
         if (!opened) {
           const started = await window.musedesk.startSession(folder ? { workspaceRoot: folder } : {});
           setSessions((prev) => (prev ? [started.session, ...prev] : [started.session]));
-          storesRef.current.set(started.session.sessionId, createTranscriptStore());
+          recoveryRef.current!.markStarted(started.session.sessionId);
+          activeRef.current = started.session.sessionId;
           setActiveId(started.session.sessionId);
           setSnap(storesRef.current.get(started.session.sessionId)!.snapshot());
           expandFolder(folder);
@@ -649,25 +694,21 @@ export function App() {
     };
   }, [activeId]);
 
-  // Stuck-turn watchdog: an active turn silent on the live stream for a full
-  // minute gets one server re-read per silence window (at most one RPC/min).
+  // Reconcile all silent running sessions, including background chats.
   React.useEffect(() => {
-    if (!everReady || busy) return undefined;
+    if (status?.state !== 'ready' || busy) return undefined;
     const t = setInterval(() => {
-      const id = activeRef.current;
-      if (!id) return;
-      const active = storesRef.current.get(id)?.snapshot().activeTurnId;
-      if (!active) return;
       const now = Date.now();
-      if (now - (lastEventRef.current.get(id) ?? 0) < STUCK_SILENCE_MS) return;
-      if (now - (resyncAtRef.current.get(id) ?? 0) < STUCK_SILENCE_MS) return;
-      resyncAtRef.current.set(id, now);
-      void resyncSession(id, true);
+      for (const [id, store] of storesRef.current) {
+        if (!store.snapshot().activeTurnId) continue;
+        if (now - (lastEventRef.current.get(id) ?? 0) < STUCK_SILENCE_MS) continue;
+        if (now - (resyncAtRef.current.get(id) ?? 0) < STUCK_SILENCE_MS) continue;
+        resyncAtRef.current.set(id, now);
+        void resyncSession(id, true);
+      }
     }, 10000);
     return () => clearInterval(t);
-  }, [everReady, busy, resyncSession]);
-
-  if (!everReady) return <StatusScreen status={status} />;
+  }, [status?.state, busy, resyncSession]);
 
   const active = sessions?.find((s) => s.sessionId === activeId) ?? null;
   const activeCtx = activeId ? (ctxUsage[activeId] ?? null) : null;
@@ -676,44 +717,63 @@ export function App() {
   const activeTodos = activeId ? (todos[activeId] ?? []) : [];
 
   const restartHost = async () => {
-    if ((sessions?.some((s) => s.status === 'running') ?? false) || snap?.activeTurnId) {
-      fail('Stop all running turns before restarting the host.');
-      return;
-    }
+    if (busy) return;
+    restartingRef.current = true;
     setBusy(true);
     setSendError(null);
     try {
-      await window.musedesk.restartHost();
+      const runningIds = (sessions ?? []).filter((s) => s.status === 'running').map((s) => s.sessionId);
+      for (const [id, store] of storesRef.current) {
+        if (store.snapshot().activeTurnId) runningIds.push(id);
+      }
+      await assertHostRestartable(window.musedesk, runningIds);
+      const nextStatus = await window.musedesk.restartHost();
+      setStatus(nextStatus);
       await waitForReady();
-      await refresh();
-      storesRef.current.clear();
-      setSnap(null);
+      recoveryRef.current!.clear();
+      setSnap((previous) => previous ? { ...previous, activeTurnId: null } : null);
       setApprovals([]);
       setPrompts([]);
       setPendingCounts({});
+      setRecoveryWarnings({});
+      setQueued({});
+      queuedRef.current = {};
+      lastEventRef.current.clear();
+      resyncAtRef.current.clear();
+      seenUiCursorsRef.current.clear();
+      const found = await refresh();
       const id = activeRef.current;
-      if (id) await selectSession(id);
-      setNotice('Host restarted — send again to retry the turn.');
+      if (id) await tryOpenSession(id, found);
+      else bootedRef.current = false;
+      setNotice('Host restarted. Check the last message before sending again.');
     } catch (e) {
       fail(e);
     } finally {
+      restartingRef.current = false;
       setBusy(false);
     }
   };
 
   const toggleFullAccess = async (next: boolean) => {
-    if ((sessions?.some((s) => s.status === 'running') ?? false) || snap?.activeTurnId) {
-      fail('Stop all running turns before switching access mode.');
-      return;
-    }
+    if (busy) return;
     setBusy(true);
     setSendError(null);
     try {
+      const runningIds = (sessions ?? []).filter((s) => s.status === 'running').map((s) => s.sessionId);
+      for (const [id, store] of storesRef.current) {
+        if (store.snapshot().activeTurnId) runningIds.push(id);
+      }
+      await assertHostRestartable(window.musedesk, runningIds);
       const s = await window.musedesk.setFullAccess(next);
+      setStatus(s);
       if (s.fullAccess !== next) return; // confirm dismissed — nothing changed
       await waitForReady();
       await refresh();
-      storesRef.current.clear();
+      recoveryRef.current!.clear();
+      setRecoveryWarnings({});
+      seenUiCursorsRef.current.clear();
+      lastEventRef.current.clear();
+      resyncAtRef.current.clear();
       setSnap(null);
       setApprovals([]);
       setPrompts([]);
@@ -736,7 +796,8 @@ export function App() {
     try {
       const started = await window.musedesk.startSession(folder ? { workspaceRoot: folder } : {});
       setSessions((prev) => (prev ? [started.session, ...prev] : [started.session]));
-      storesRef.current.set(started.session.sessionId, createTranscriptStore());
+      recoveryRef.current!.markStarted(started.session.sessionId);
+      activeRef.current = started.session.sessionId;
       setActiveId(started.session.sessionId);
       setSnap(storesRef.current.get(started.session.sessionId)!.snapshot());
       expandFolder(folder);
@@ -801,7 +862,7 @@ export function App() {
   };
 
   const send = (text: string) => {
-    if (!activeId) return;
+    if (!activeId || status?.state !== 'ready' || busy) return;
     const sessionId = activeId;
     const attached = shotsRef.current;
     const attachments = attached.map((s) => ({
@@ -1008,9 +1069,25 @@ export function App() {
     window.musedesk.interruptTurn(id).catch(fail);
   };
 
+  if (!everReady) {
+    return <StatusScreen status={status} busy={busy} onRestart={() => void restartHost()} />;
+  }
+
+  const connected = status?.state === 'ready';
+  const connectionLabel = connected ? 'connected' : status?.state === 'starting' ? 'reconnecting' : 'disconnected';
+  const recoveryWarning = activeId ? recoveryWarnings[activeId] : null;
+
   if (view === 'overview') {
     return (
       <main className="app">
+        {!connected && (
+          <div className="banner error">
+            {status?.error ?? 'Connection unavailable.'}
+            <button className="btn small" disabled={busy || status?.state === 'starting'} onClick={() => void restartHost()}>
+              Restart host
+            </button>
+          </div>
+        )}
         <Overview
           cards={overviewCards}
           onOpen={(id) => void selectSession(id)}
@@ -1043,7 +1120,7 @@ export function App() {
       <div className="main">
         <header className="topbar">
           <span className="brand">MuseDesk</span>
-          <span className="pill ok">connected · {status?.cliVersion ?? ''}</span>
+          <span className={`pill ${connected ? 'ok' : 'error'}`}>{connectionLabel} · {status?.cliVersion ?? ''}</span>
           {active && (
             <span className="ws" title={active.workspaceRoot ?? 'server default'}>
               {baseName(active.workspaceRoot) ?? 'default folder'}
@@ -1087,11 +1164,16 @@ export function App() {
           <button
             className="btn icon"
             onClick={() => activeId && void resyncSession(activeId, false)}
-            disabled={busy || !activeId}
+            disabled={busy || !activeId || !connected}
             title="Re-sync active session with the server"
           >
             ⟳
           </button>
+          {!connected && (
+            <button className="btn small" disabled={busy || status?.state === 'starting'} onClick={() => void restartHost()}>
+              Restart host
+            </button>
+          )}
           <button
             className={`btn panel-toggle${panel.open ? ' on' : ''}`}
             onClick={() => updatePanel({ open: !panel.open, tab: panel.tab })}
@@ -1112,7 +1194,7 @@ export function App() {
             session={active}
             models={models}
             effort={effort}
-            disabled={busy}
+            disabled={busy || !connected}
             onModelChange={changeModel}
             onEffortChange={setEffort}
             onApprovalModeChange={changeApprovalMode}
@@ -1120,6 +1202,8 @@ export function App() {
         )}
         {status?.state === 'starting' && <div className="banner">Reconnecting to host…</div>}
         {status?.state === 'error' && <div className="banner error">{status.error ?? 'host error'}</div>}
+        {!status && <div className="banner error">Connection status unavailable. Restart host to reconnect.</div>}
+        {recoveryWarning && <div className="banner warn">{recoveryWarning}</div>}
         {status?.cliArch === 'x86_64' && (
           <div className="banner warn">
             The `muse` CLI is Intel-only and runs under Rosetta — Apple will drop Intel support in a
@@ -1135,6 +1219,7 @@ export function App() {
             snapshot={snap}
             shotsFor={shotsFor}
             busy={busy}
+            connected={connected}
             queued={activeId ? (queued[activeId] ?? []) : []}
             onRestartHost={() => void restartHost()}
           />
@@ -1144,7 +1229,7 @@ export function App() {
         )}
         <Composer
           running={!!snap?.activeTurnId}
-          disabled={!activeId || busy}
+          disabled={!activeId || busy || !connected}
           sending={activeId ? (sending[activeId] ?? 0) > 0 : false}
           draft={draft}
           shots={shots}

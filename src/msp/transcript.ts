@@ -137,7 +137,7 @@ export interface TranscriptStore {
    * completed and the spinner clears. `null` items (history unserved)
    * reconciles turns only. Terminal turns are never rewritten.
    */
-  resyncFromHistory(items: Item[] | null, serverActiveTurnId: string | null): void;
+  resyncFromHistory(items: Item[] | null, serverActiveTurnId: string | null, cursor?: string): void;
   snapshot(): TranscriptSnapshot;
 }
 
@@ -148,6 +148,7 @@ export function createTranscriptStore(): TranscriptStore {
   let activeTurnId: string | null = null;
   let lastCursor: string | null = null;
   let gap: { after: string; next: string } | null = null;
+  const seenCursors = new Set<string>();
 
   function entryFor(itemId: string): Entry {
     let e = entries.get(itemId);
@@ -161,7 +162,13 @@ export function createTranscriptStore(): TranscriptStore {
 
   function apply(method: string, params: unknown): void {
     const p = (params ?? {}) as Record<string, unknown>;
-    if (typeof p.viewCursor === 'string') lastCursor = p.viewCursor;
+    if (typeof p.viewCursor === 'string') {
+      // Advisory status frames can carry the causing event's cursor too.
+      const key = `${method}|${p.viewCursor}`;
+      if (seenCursors.has(key)) return;
+      seenCursors.add(key);
+      lastCursor = p.viewCursor;
+    }
     switch (method) {
       case 'item/started': {
         const { item } = p as unknown as ItemStartedParams;
@@ -260,12 +267,16 @@ export function createTranscriptStore(): TranscriptStore {
     seed(items: Item[]): void {
       seedItems(items);
     },
-    resyncFromHistory(items: Item[] | null, serverActiveTurnId: string | null): void {
+    resyncFromHistory(items: Item[] | null, serverActiveTurnId: string | null, cursor?: string): void {
       if (items) {
         entries.clear();
         order.length = 0;
         gap = null;
         seedItems(items);
+      }
+      if (cursor !== undefined) {
+        seenCursors.clear();
+        lastCursor = cursor;
       }
       if (activeTurnId && activeTurnId !== serverActiveTurnId) {
         const t = turns[activeTurnId];
@@ -274,8 +285,15 @@ export function createTranscriptStore(): TranscriptStore {
         }
       }
       if (serverActiveTurnId) {
-        turns[serverActiveTurnId] = { turnId: serverActiveTurnId, phase: 'running' };
-        activeTurnId = serverActiveTurnId;
+        const terminal = turns[serverActiveTurnId];
+        // A replay may have already delivered the terminal frame while an
+        // earlier metadata read was in flight. Never resurrect that turn.
+        if (!terminal || terminal.phase === 'running' || terminal.phase === 'queued') {
+          turns[serverActiveTurnId] = { turnId: serverActiveTurnId, phase: 'running' };
+          activeTurnId = serverActiveTurnId;
+        } else {
+          activeTurnId = null;
+        }
       } else {
         activeTurnId = null;
       }

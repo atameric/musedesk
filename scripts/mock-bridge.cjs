@@ -162,6 +162,7 @@ function buildMock({ pending }) {
     sendTurn: notImplemented('sendTurn'),
     interruptTurn: notImplemented('interruptTurn'),
     pageView: notImplemented('pageView'),
+    subscribeView: async () => ({ viewCursor: 'v1' }),
     readSession: notImplemented('readSession'),
     setModel: notImplemented('setModel'),
     setApprovalMode: notImplemented('setApprovalMode'),

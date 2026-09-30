@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import type { InitializeResult } from './msp';
 
 interface Pending {
@@ -39,6 +40,8 @@ export class MspHost implements IMspClient {
   private notifHandlers = new Set<(n: MspEvent) => void>();
   private exitError: Error | null = null;
   private errBuf = '';
+  private healthHandlers = new Set<(error: Error | null) => void>();
+  private healthError: Error | null = null;
   public initializeResult: InitializeResult | null = null;
 
   constructor(
@@ -47,6 +50,7 @@ export class MspHost implements IMspClient {
     private readonly clientVersion = '1.0.0',
     private readonly serveArgs: string[] = [],
     private readonly spawnArgv?: string[],
+    private readonly requestTimeoutMs = REQUEST_TIMEOUT_MS,
   ) {}
 
   get stderrTail(): string {
@@ -54,29 +58,33 @@ export class MspHost implements IMspClient {
   }
 
   async connect(): Promise<InitializeResult> {
-    this.child = spawn(this.binPath, this.spawnArgv ?? ['serve', ...this.serveArgs], {
+    if (this.child) throw new Error('host already started');
+    this.exitError = null;
+    this.buf = '';
+    const child = spawn(this.binPath, this.spawnArgv ?? ['serve', ...this.serveArgs], {
       stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    this.child = child;
+    // Install transport handlers before awaiting spawn: EOF/errors during the
+    // handshake must reject initialize too, without an unhandled EPIPE.
+    const decoder = new StringDecoder('utf8');
+    child.stdout!.on('data', (d: Buffer) => this.onData(decoder.write(d)));
+    child.stderr!.on('data', (d: Buffer) => {
+      this.errBuf = (this.errBuf + d.toString()).slice(-2048);
+    });
+    child.on('error', (err) => this.failTransport(err));
+    child.stdin!.on('error', (err) => this.failTransport(err));
+    child.stdout!.on('end', () => this.failTransport(new Error('muse serve output closed')));
+    child.on('exit', (code, signal) => {
+      this.failTransport(new Error(`muse serve exited code=${code} signal=${signal}`));
     });
     await new Promise<void>((resolve, reject) => {
       const onErr = (e: Error) => reject(e);
-      this.child!.once('error', onErr);
-      this.child!.once('spawn', () => {
-        this.child!.off('error', onErr);
+      child.once('error', onErr);
+      child.once('spawn', () => {
+        child.off('error', onErr);
         resolve();
       });
-    });
-    this.child.stdout!.on('data', (d: Buffer) => this.onData(d.toString()));
-    this.child.stderr!.on('data', (d: Buffer) => {
-      this.errBuf = (this.errBuf + d.toString()).slice(-2048);
-    });
-    this.child.on('exit', (code, signal) => {
-      const err = new Error(`muse serve exited code=${code} signal=${signal}`);
-      this.exitError = err;
-      for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
-        p.reject(err);
-      }
-      this.pending.clear();
     });
     const result = (await this.request('initialize', {
       clientInfo: { name: this.clientName, title: 'MuseDesk', version: this.clientVersion },
@@ -93,16 +101,32 @@ export class MspHost implements IMspClient {
     };
   }
 
+  /** Transport loss/timeouts are observable even with no pending UI request. */
+  onHealthChange(fn: (error: Error | null) => void): () => void {
+    this.healthHandlers.add(fn);
+    return () => this.healthHandlers.delete(fn);
+  }
+
+  get error(): Error | null {
+    return this.healthError;
+  }
+
   request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     if (!this.child || this.exitError) return Promise.reject(this.exitError ?? new Error('host not connected'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`MSP request ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`));
-      }, REQUEST_TIMEOUT_MS);
+        const err = new Error(`MSP request ${method} timed out after ${this.requestTimeoutMs}ms`);
+        this.setHealthError(err);
+        reject(err);
+      }, this.requestTimeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.send({ jsonrpc: '2.0', id, method, params });
+      try {
+        this.send({ jsonrpc: '2.0', id, method, params });
+      } catch (err) {
+        this.failTransport(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -113,6 +137,7 @@ export class MspHost implements IMspClient {
   async close(): Promise<void> {
     const child = this.child;
     this.child = null;
+    this.failTransport(new Error('MSP host closed'));
     if (!child || child.exitCode !== null) return;
     child.kill('SIGTERM');
     await new Promise<void>((resolve) => {
@@ -132,7 +157,27 @@ export class MspHost implements IMspClient {
   }
 
   private send(frame: Record<string, unknown>): void {
-    this.child!.stdin!.write(JSON.stringify(frame) + '\n');
+    if (!this.child?.stdin?.writable || this.exitError) throw this.exitError ?? new Error('host not connected');
+    this.child.stdin.write(JSON.stringify(frame) + '\n');
+  }
+
+  private setHealthError(error: Error | null): void {
+    if (this.healthError?.message === error?.message) return;
+    this.healthError = error;
+    for (const fn of this.healthHandlers) {
+      try { fn(error); } catch { /* observers cannot break the transport */ }
+    }
+  }
+
+  private failTransport(error: Error): void {
+    if (this.exitError) return;
+    this.exitError = error;
+    this.setHealthError(error);
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(error);
+    }
+    this.pending.clear();
   }
 
   private onData(chunk: string): void {
@@ -160,6 +205,7 @@ export class MspHost implements IMspClient {
         continue;
       }
       if (typeof msg.id === 'number') {
+        if (!this.exitError) this.setHealthError(null);
         const p = this.pending.get(msg.id);
         if (!p) continue;
         this.pending.delete(msg.id);

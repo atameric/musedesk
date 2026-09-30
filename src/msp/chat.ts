@@ -22,6 +22,7 @@ import type {
   UserInputCancelResult,
   ViewPageDirection,
   ViewPageResult,
+  ViewSubscribeResult,
 } from './msp';
 import { uuidv7 } from './uuid';
 import { MAX_ATTACHMENTS } from '../shared/limits';
@@ -142,6 +143,10 @@ export class ChatManager {
     )) as ViewPageResult;
   }
 
+  async subscribeView(sessionId: string, after?: string): Promise<ViewSubscribeResult> {
+    return (await this.client.request('view/subscribe', stripUndefined({ sessionId, after }))) as ViewSubscribeResult;
+  }
+
   async listSessions(opts: ListSessionsOptions = {}): Promise<SessionListResult> {
     return (await this.client.request(
       'session/list',
@@ -247,6 +252,7 @@ export class ChatManager {
             await this.client.request('view/subscribe', { sessionId, after });
             this.emit(sessionId, 'muse/resubscribed', { sessionId, after, next });
           } catch (e) {
+            this.recoveredGaps.delete(key);
             this.emit(sessionId, 'muse/resubscribeFailed', {
               sessionId,
               error: e instanceof Error ? e.message : String(e),

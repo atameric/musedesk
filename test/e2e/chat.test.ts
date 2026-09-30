@@ -25,11 +25,7 @@ describe('MSP scripted chat flows (fake host)', () => {
         commandId: uuidv7(),
         providerId: 'echo',
       })) as { session: { sessionId: string } };
-      const ack = (await host!.request('turn/start', {
-        commandId: uuidv7(),
-        sessionId: started.session.sessionId,
-        input: [{ type: 'text', text: 'boom please' }],
-      })) as { turnId: string };
+      // Subscribe before sending: ack and terminal may share a stdio chunk.
       const done = new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('turn did not settle')), 10000);
         host!.onNotification((n) => {
@@ -39,6 +35,11 @@ describe('MSP scripted chat flows (fake host)', () => {
           }
         });
       });
+      const ack = (await host!.request('turn/start', {
+        commandId: uuidv7(),
+        sessionId: started.session.sessionId,
+        input: [{ type: 'text', text: 'boom please' }],
+      })) as { turnId: string };
       await done;
       const snap = store.snapshot();
       assert.equal(snap.turns[ack.turnId].phase, 'failed');

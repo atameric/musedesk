@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor } from 'electron';
 import os from 'node:os';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
@@ -34,6 +34,8 @@ let host: MspHost | null = null;
 let chat: ChatManager | null = null;
 let mainWindow: BrowserWindow | null = null;
 let fullAccess = false;
+let hostStartQueue: Promise<void> = Promise.resolve();
+let probingHost: MspHost | null = null;
 
 const createWindow = () => {
   mainWindow = new BrowserWindow({
@@ -44,6 +46,10 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  const window = mainWindow;
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null;
+  });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -53,11 +59,19 @@ const createWindow = () => {
 };
 
 function requireChat(): ChatManager {
-  if (!chat) throw new Error('MSP host is not ready yet');
+  if (!chat || !host?.connected || status.state !== 'ready') {
+    throw new Error(status.error ?? 'MSP host is not ready yet');
+  }
   return chat;
 }
 
-async function startHostWith(opts: { fullAccess: boolean }) {
+function startHostWith(opts: { fullAccess: boolean }): Promise<void> {
+  const start = hostStartQueue.then(() => startHostNow(opts));
+  hostStartQueue = start.catch(() => { /* allow the next restart */ });
+  return start;
+}
+
+async function startHostNow(opts: { fullAccess: boolean }) {
   status.state = 'starting';
   status.error = null;
   status.fullAccess = opts.fullAccess;
@@ -76,6 +90,12 @@ async function startHostWith(opts: { fullAccess: boolean }) {
     status.cliArch = install.arch;
     const h = new MspHost(install.binPath, 'musedesk', app.getVersion(), serveArgsFor(opts.fullAccess));
     host = h;
+    h.onHealthChange((error) => {
+      // Ignore late failures from an intentionally replaced process.
+      if (host !== h || status.state === 'starting' || !status.fingerprintMatch) return;
+      status.state = error ? 'error' : 'ready';
+      status.error = error?.message ?? null;
+    });
     const init = await h.connect();
     status.serverVersion = `${init.serverInfo.name}/${init.serverInfo.version}`;
     status.fingerprint = init.schema.fingerprint;
@@ -92,12 +112,38 @@ async function startHostWith(opts: { fullAccess: boolean }) {
     const manager = new ChatManager(h);
     chat = manager;
     manager.onEvent((sessionId, method, params) => {
-      mainWindow?.webContents.send(IPC.chatEvent, { sessionId, method, params });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.chatEvent, { sessionId, method, params });
+      }
     });
+    if (!h.connected || h.error) throw h.error ?? new Error('MSP host disconnected during startup');
     status.state = 'ready';
   } catch (e) {
     status.state = 'error';
     status.error = e instanceof Error ? e.message : String(e);
+    const failedHost = host;
+    host = null;
+    chat = null;
+    await failedHost?.close();
+  }
+}
+
+// Read-only heartbeat: a sleeping/hung process can still have live stdio.
+// This runs in main so renderer timer throttling cannot mask transport loss.
+async function probeHost(): Promise<void> {
+  const h = host;
+  const isStarting = () => status.state === 'starting';
+  if (!h?.connected || !chat || isStarting() || probingHost === h) return;
+  probingHost = h;
+  try {
+    await h.request('session/list', { limit: 1 });
+  } catch (e) {
+    if (host === h && status.state !== 'starting') {
+      status.state = 'error';
+      status.error = e instanceof Error ? e.message : String(e);
+    }
+  } finally {
+    if (probingHost === h) probingHost = null;
   }
 }
 
@@ -110,6 +156,7 @@ ipcMain.handle(IPC.turnInterrupt, (_e, args) =>
   requireChat().interruptTurn(args.sessionId, args.turnId, args.retract ?? false),
 );
 ipcMain.handle(IPC.viewPage, (_e, args) => requireChat().pageView(args.sessionId, args.opts ?? {}));
+ipcMain.handle(IPC.viewSubscribe, (_e, args) => requireChat().subscribeView(args.sessionId, args.after));
 ipcMain.handle(IPC.sessionList, (_e, opts) => requireChat().listSessions(opts ?? {}));
 ipcMain.handle(IPC.sessionResume, (_e, args) =>
   requireChat().resumeSession(args.sessionId, args.opts ?? {}),
@@ -200,6 +247,8 @@ app.on('ready', () => {
   createWindow();
   fullAccess = loadPrefs(app.getPath('userData')).fullAccess;
   void startHostWith({ fullAccess });
+  setInterval(() => void probeHost(), 15000).unref();
+  powerMonitor.on('resume', () => void probeHost());
 });
 
 app.on('window-all-closed', () => {

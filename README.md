@@ -32,7 +32,7 @@ with `npm run screenshots` (headless, no CLI or auth needed)._
   their own CLI install and their own membership.
 - Node.js 20+ and npm (for development builds).
 
-This build was verified against `Muse Code 1.3.0 (1.3.0-R3057.1)`. On every
+This build was verified against `Muse Code 1.4.1 (1.4.1-R4503.1)`. On every
 launch the app compares the live protocol fingerprint with the pinned one
 and refuses to drive an unknown protocol.
 
@@ -120,13 +120,26 @@ choice is remembered across launches. Only use it for work you trust.
 
 ## Turn recovery
 
-If a turn's terminal event is missed on the live stream, the transcript can
-get stuck on Working…: the ⟳ button in the top bar re-reads the active
-session from the server and reconciles it (a silent watchdog does the same
-automatically after a minute without events). When a turn fails with a
+The connection badge follows host health. Process exit, closed stdio, and
+request timeouts show a disconnected state and a **Restart host** button;
+a read-only heartbeat also checks the host every 15 seconds and after wake.
+Sending stays disabled while disconnected. Recovery checks current server
+state so a stale Working… indicator cannot block restart of a failed host.
+
+If a turn's terminal event is missed, the ⟳ button re-reads the active
+session and reconnects its live stream. A watchdog does the same for all
+silent running sessions after a minute without events, including background
+chats. Recovery failures stay visible. When a turn fails with a
 host-runtime error (`configError` and friends — e.g. the MCP startup audit
 failure), the failed-turn banner offers a **Restart host** button that
-restarts `muse serve` and re-attaches your sessions; send again afterwards.
+restarts `muse serve` and re-attaches the active session. Check its recovered
+history before retrying a message.
+
+When the server cannot serve folded history (for example
+`projectionUnavailable` or a history budget limit), MuseDesk pages the
+durable view and replays the live suffix from the observed cursor. Overlap
+is deduplicated so recovery cannot repeat streamed text. If paging fails,
+cached messages remain visible with a recovery warning and can be retried.
 
 ## Context usage
 
@@ -198,8 +211,8 @@ On first launch macOS may block it:
 
 - Background sessions that request approval/user input show a sidebar badge;
   the dialog opens after switching to that session.
-- `session/read` history modes other than `inline`/`snapshot` seed no items;
-  live events still stream and a notice is shown.
+- Server-side history or live projection failures can still require a host
+  restart; unsuccessful recovery is reported in the chat.
 - No auto-update, no signed build, no Windows/Linux package testing.
 - Local session statistics only (no account/credit metering exists client-side).
 

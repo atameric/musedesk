@@ -307,15 +307,16 @@ typecheck, lint green; verified against CLI 1.2.1.
   launch-boundary echo); queued row + Sending… pixels verified via
   temporarily seeded captures (reverted).
 
-## Empty chat after restart (server-side, not our bug)
+## Empty chat after restart (server projection failure, missing client fallback)
 
 - Symptom: after quitting/reopening, session `01a0a12d` (19 turns on disk)
   renders empty with suggestion cards. Verified read-only: `session/read`
   serves `history.mode: 'none', noneReason: 'projectionUnavailable'` while
   `view/page` returns events fine — the history projection is down
   server-side (post-compaction-install-59 + MCP-degraded runtime), data
-  intact in `session.jsonl` (15,516 records). Any client (incl. the CLI)
-  would show the same gap; live turns still echo.
+  intact in `session.jsonl` (15,516 records). The renderer needed a
+  `view/page` fallback to recover the intact durable history; live turns
+  still echo.
 - Same window: turn 19 failed instantly with the known infra
   `configError` ("MCP startup audit failed") — Restart host is the remedy;
   the fresh host (pid 48785) holds the lease at low CPU.
@@ -352,6 +353,35 @@ against CLI 1.3.0 (re-pinned mid-release, see below).
   (window + weekly percent, reset times, tier) — the account-allowance
   UI blocked in every prior release is now buildable. Left for the
   next task (beta.4 ships the re-pin only).
+
+## Connection and history recovery — 2026-09-30
+
+- Re-exported the stable MSP schema from installed CLI 1.4.1
+  (`1.4.1-R4503.1`) and pinned its live initialize fingerprint. Unknown
+  protocol fingerprints still fail closed.
+- Host exit, stdout EOF, write failures, and RPC timeouts now update health.
+  A main-process heartbeat checks `session/list` every 15 seconds and after
+  macOS wake; answered requests restore responsiveness. Host restarts are
+  serialized, and late failures from replaced processes are ignored.
+- The UI connection badge reflects health, disables sending while offline,
+  and replaces stale Working… with a connection-loss state. Restart checks
+  current server metadata rather than trusting stale running rows; an
+  unhealthy host can be recovered despite those rows.
+- `SessionRecovery` separates live-created caches from hydrated histories,
+  pages `view/page` when folded history is unavailable, then reattaches at
+  the observed head. Event method + cursor deduplication prevents repeated
+  deltas while preserving advisory frames that share a source cursor.
+  Failed recovery preserves cached content and shows a retryable warning.
+- The watchdog covers background running sessions too. Pending approvals
+  and input prompts are reconciled on selection and active-session recovery.
+  Session listings consume every page instead of truncating at 50 rows.
+- Regression coverage includes process loss, silence, fragmented Turkish
+  UTF-8, paging failure/retry, history/live races, stale restart guards, and
+  the actual React recovery button in headless Chrome. Fixed an existing
+  test race that subscribed to turn completion after the turn/start ack.
+- Verification: 105 unit tests and 20 e2e tests passed, including a real CLI
+  echo turn and exact schema drift check; typecheck and lint passed. The
+  updated `.app` was packaged and verified as arm64-only.
 
 ## Continuing
 
